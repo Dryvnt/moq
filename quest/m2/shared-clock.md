@@ -48,11 +48,6 @@ Guidance:
   shifts down. Refuse a frame that would land below zero rather than clamp it.
 - A `with_clock` catalog is fixed from the start, so its importers offset too.
   Today they publish verbatim PTS on a clock they didn't place.
-- Both CMAF decoders stamp samples from `tfdt` and ignore the frame timestamp:
-  `fmp4::decode` in moq-mux and `Format.decode` in
-  `js/hang/src/container/cmaf/format.ts`. Rebase them: a sample's time is the
-  frame timestamp plus its offset from the fragment's first sample. Check the
-  fMP4 exporter does the same.
 - Document on `catalog::Producer::clock` that taking the clock fixes it.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
@@ -63,6 +58,10 @@ Guidance:
 Public API: no new items. `catalog::Producer::clock()` now fixes the mapping,
 and importers no longer publish verbatim PTS when the clock was already taken.
 Wire: none.
+
+## Required
+
+- [CMAF frame timestamp](/quest/m2/cmaf-frame-timestamp.md) - decoders honour an offset frame timestamp on passthrough tracks
 
 ## Related
 
