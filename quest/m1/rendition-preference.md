@@ -29,8 +29,11 @@ Decided in planning interviews on 2026-10-01:
   step down a ladder.
 - Not a routing-style `cost`: an honest "produced on demand" cost would mark
   moq-transcode's rungs, so the strict rule would stop capable viewers from
-  stepping down. The publisher sets `preference` explicitly; moq-transcode's
-  rungs keep the default and keep adapting.
+  stepping down. The publisher sets `preference` explicitly.
+- moq-transcode's rungs inherit their source's `preference`, so a ladder
+  adapts within one tier even when the source is not at 0. `rung_entry`
+  copies it like `optimize_for_latency`, and the per-snapshot refresh beside
+  `inherit_stalled` keeps it current when the source catalog changes.
 - Named `preference`, higher wins, after DASH's `@selectionPriority` (strict
   across per-codec Adaptation Sets, higher preferred). Not `priority`, which
   already means track send priority. Signed, so a new preferred ladder is `1`
@@ -62,7 +65,9 @@ Decided in planning interviews on 2026-10-01:
   source selects the lower preference; three tiers resolve to the highest
   supported one; a manual `target.name` selects a lower preference; `ranked`
   orders a larger lower-preference rendition after a smaller source; a WHEP
-  peer offering the fallback's codec first still gets the source.
+  peer offering the fallback's codec first still gets the source; a
+  moq-transcode source at preference 1 under a budget that fits only a rung
+  still selects the rung.
 - Out of scope: moq-ffi, libmoq, and the bindings until a native player needs
   the field. moq-transcode producing same-size codec fallbacks; the consumer
   publishes its own.
