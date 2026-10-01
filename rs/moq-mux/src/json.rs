@@ -513,6 +513,44 @@ mod test {
 		assert_eq!(drain(consumer), vec![json!({ "live": true })]);
 	}
 
+	/// A track created before an importer's first frame stamps on the clock that frame anchors, not
+	/// the one the catalog started with.
+	#[test]
+	fn a_write_follows_the_anchored_clock() {
+		let (mut broadcast, mut catalog) = catalog();
+		let mut status = catalog
+			.json_snapshot::<Value>(track(&mut broadcast, "status"), Config::default())
+			.unwrap();
+		let mut chat = catalog
+			.json_stream::<Value>(track(&mut broadcast, "chat"), Config::default())
+			.unwrap();
+		let mut subscribers = [status.consume(), chat.consume()];
+
+		// The stream starts an hour in, far from the ten seconds a fresh clock reads.
+		let first = moq_net::Timestamp::from_secs(3600).unwrap();
+		catalog.anchor(first).unwrap();
+		status.update(&json!({ "live": true })).unwrap();
+		chat.append(Timed::from(&json!({ "n": 1 })).at(std::time::Instant::now()))
+			.unwrap();
+		let after = catalog.clock().now();
+
+		let waiter = kio::Waiter::noop();
+		for subscriber in &mut subscribers {
+			let mut stamps = Vec::new();
+			while let Poll::Ready(Ok(Some(mut group))) = subscriber.poll_recv_group(&waiter) {
+				while let Poll::Ready(Ok(Some(frame))) = group.poll_read_frame(&waiter) {
+					stamps.push(frame.timestamp.as_millis());
+				}
+			}
+			assert_eq!(stamps.len(), 1);
+			assert!(
+				// The track stores milliseconds.
+				first.as_millis() <= stamps[0] && stamps[0] <= after.as_millis(),
+				"{first:?} {stamps:?} {after:?}"
+			);
+		}
+	}
+
 	/// `delta_ratio` is an encoder setting on [`Config`], not a catalog field. A ratio of 0
 	/// publishes each value as its own group; a positive ratio keeps the next value in that group.
 	#[test]
