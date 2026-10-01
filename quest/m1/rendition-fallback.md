@@ -12,6 +12,10 @@ every rendition, fallbacks included.
 
 ## Plan
 
+Requested by an external consumer (OneTooMany), who publishes an H.265 source
+with its own H.264 transcode beside it, so a viewer that can decode H.265
+should never pull the transcode.
+
 Decided in a planning interview on 2026-10-01:
 
 - A boolean `fallback`, not a numeric `cost` or `preference`. Routing cost
