@@ -55,5 +55,5 @@ Decided in a planning interview on 2026-10-01:
 
 ## Related
 
-- [JS rendition ranking](/quest/m1/js-ranked.md) - mirrors `Video::ranked` in `@moq/hang`, which now sorts fallbacks last
+- [JS rendition ranking](/quest/m1/js-ranked.md) - mirrors `Video::ranked` in `@moq/hang`, which sorts fallbacks last once this quest lands
 - [Audio rendition pick](/quest/m1/audio-ranked.md) - audio ranking, where `fallback` could join later
