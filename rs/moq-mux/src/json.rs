@@ -165,8 +165,6 @@ fn delta_ratio_of<C: std::any::Any>(config: &C) -> Option<u32> {
 pub struct Snapshot<T, E: CatalogExt = ()> {
 	inner: moq_json::snapshot::Producer<T>,
 	listing: Listing,
-	/// Maps a value's capture instant onto the broadcast timeline.
-	clock: crate::Clock,
 	/// Which catalog the entry lives in. The entry's own type is erased by `Listing`.
 	_catalog: PhantomData<fn() -> E>,
 }
@@ -192,12 +190,10 @@ impl<T: Serialize, E: CatalogExt> Snapshot<T, E> {
 			json.delta_ratio = delta_ratio;
 		}
 		let inner = moq_json::snapshot::Producer::new(track, json);
-		let clock = rendition.clock();
 		let listing = Listing::new(rendition, config)?;
 		Ok(Self {
 			inner,
 			listing,
-			clock,
 			_catalog: PhantomData,
 		})
 	}
@@ -226,7 +222,7 @@ impl<T: Serialize, E: CatalogExt> Snapshot<T, E> {
 	where
 		T: 'a,
 	{
-		let (value, captured) = self.clock.stamp(value.into())?;
+		let (value, captured) = self.listing.stamp(value.into())?;
 		match self.inner.update(value)? {
 			Some(size) => self.listing.record(size, captured),
 			None => Ok(()),
@@ -255,8 +251,6 @@ pub struct Stream<T, E: CatalogExt = ()> {
 	/// entry advertising a track that can no longer accept records only misleads a consumer that
 	/// discovers it afterwards.
 	listing: Option<Listing>,
-	/// Maps a record's capture instant onto the broadcast timeline.
-	clock: crate::Clock,
 	/// Which catalog the entry lives in. The entry's own type is erased by `Listing`.
 	_catalog: PhantomData<fn() -> E>,
 }
@@ -272,13 +266,11 @@ impl<T: Serialize, E: CatalogExt> Stream<T, E> {
 			json.compression = moq_json::Compression::Deflate;
 		}
 		let inner = moq_json::stream::Producer::new(track, json);
-		let clock = rendition.clock();
 		let listing = Listing::new(rendition, config)?;
 		Ok(Self {
 			inner,
 			name: listing.name().to_string(),
 			listing: Some(listing),
-			clock,
 			_catalog: PhantomData,
 		})
 	}
@@ -310,7 +302,11 @@ impl<T: Serialize, E: CatalogExt> Stream<T, E> {
 	where
 		T: 'a,
 	{
-		let (value, captured) = self.clock.stamp(value.into())?;
+		let (value, captured) = match &mut self.listing {
+			Some(listing) => listing.stamp(value.into())?,
+			// A failed write already ended the log, which refuses this record whatever its time.
+			None => (Timed::from(value.into().value), None),
+		};
 		let size = match self.inner.append(value) {
 			Ok(size) => size,
 			Err(err) => {
