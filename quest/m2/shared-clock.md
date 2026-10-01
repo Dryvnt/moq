@@ -34,6 +34,11 @@ Decided (2026-10-01):
   changes. A backward anchor would hit `TimestampRewind`, and every audio
   buffer would take the catalog lock to watch for an event that should never
   happen while it is live.
+- The offset rewrites only the moq-lite frame timestamp, never the payload. An
+  fMP4 passthrough fragment keeps its source `tfdt`, so the two disagree. The
+  frame timestamp is the broadcast timeline; a payload's timestamps are only
+  relative within the frame. Ad insertion (splicing sources with unrelated PTS
+  bases) needs the same rule.
 - m2: nothing in-tree reaches it. `moq-cli publish` runs a capture or a stdin
   import, never both, and moq-ffi does not expose capture.
 
@@ -43,10 +48,17 @@ Guidance:
   shifts down. Refuse a frame that would land below zero rather than clamp it.
 - A `with_clock` catalog is fixed from the start, so its importers offset too.
   Today they publish verbatim PTS on a clock they didn't place.
+- Both CMAF decoders stamp samples from `tfdt` and ignore the frame timestamp:
+  `fmp4::decode` in moq-mux and `Format.decode` in
+  `js/hang/src/container/cmaf/format.ts`. Rebase them: a sample's time is the
+  frame timestamp plus its offset from the fragment's first sample. Check the
+  fMP4 exporter does the same.
 - Document on `catalog::Producer::clock` that taking the clock fixes it.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
-  reverse order: an importer first keeps its PTS verbatim.
+  reverse order: an importer first keeps its PTS verbatim. A passthrough
+  fragment whose `tfdt` disagrees with its frame timestamp decodes at the frame
+  timestamp, in Rust and JS.
 
 Public API: no new items. `catalog::Producer::clock()` now fixes the mapping,
 and importers no longer publish verbatim PTS when the clock was already taken.
