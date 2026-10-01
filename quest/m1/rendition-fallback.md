@@ -1,12 +1,14 @@
-# [S] Fallback renditions
+# [M] Fallback renditions
 
 ## Goal
 
-A hang video rendition marked `fallback: true` is only chosen when no
-non-fallback rendition can be decoded. `<moq-watch>` and
-`hang::catalog::Video::ranked` both honor it, so a viewer, RTMP play, WHEP,
-FLV export, and moq-transcode's source pick only subscribe to a transcode
-(such as H.265 republished as H.264) when they must.
+A hang video rendition marked `fallback: true` is only selected
+automatically when no non-fallback rendition can be decoded. `<moq-watch>`,
+`hang::catalog::Video::ranked`, and WHEP's codec choice honor it, so a viewer
+and every single-rendition egress (single-track RTMP play, WHEP, FLV export,
+moq-transcode's source pick) only subscribe to a transcode (such as H.265
+republished as H.264) when they must. A multitrack RTMP client still receives
+every rendition, fallbacks included.
 
 ## Plan
 
@@ -30,16 +32,23 @@ Decided in a planning interview on 2026-10-01:
 - A manual `target.name` still wins, as it does for `stalled`. The quality
   picker keeps listing fallbacks.
 - `Video::ranked` sorts every fallback after every non-fallback, then by
-  picture and bitrate as today. Its callers take the first rendition they
-  support, so they need no change. Update the
+  picture and bitrate as today. RTMP play, FLV export, and moq-transcode take
+  the first rendition they support, so they need no change. Update the
   [JS rendition ranking](/quest/m1/js-ranked.md) Plan if it is still open.
+- WHEP needs its own step: `Session::handle_media` (`rs/moq-rtc`) takes the
+  peer's first negotiated payload type, then `pick_video` filters `ranked()`
+  to that codec, so a peer offering the fallback's codec first would get the
+  fallback. Choose across every negotiated video codec so a supported
+  non-fallback wins.
 - Update `rs/hang` `VideoConfig`, `js/hang` `VideoConfigSchema`,
   `drafts/draft-lcurley-moq-hang.md` (next to `stalled`, with a
   source-plus-fallback example), and `doc/concept/hang.md`. No new docs page.
-- Tests: a supported source wins over an unstalled fallback with a higher
-  bitrate or a bitrate budget that fits only the fallback; an unsupported
-  source selects the fallback; `ranked` orders a larger fallback after a
-  smaller source.
+- Tests: a supported source wins over a fallback with a higher bitrate, over
+  a bitrate budget that fits only the fallback, and while the source is
+  stalled and the fallback is not; an unsupported source selects the
+  fallback; a manual `target.name` selects a fallback; `ranked` orders a
+  larger fallback after a smaller source; a WHEP peer offering the fallback's
+  codec first still gets the source.
 - Out of scope: moq-ffi, libmoq, and the bindings until a native player needs
   the field. moq-transcode producing same-size codec fallbacks; the consumer
   publishes its own.
