@@ -78,7 +78,7 @@ QUIC studies there on that rule.
 - [Untimed model](/quest/m1/untimed-model.md) - on dev, moq-net frames and datagrams carry an absent timestamp to every subscriber; no receiver fills in arrival time
 - [JS untimed model](/quest/m1/js-untimed-model.md) - the same in @moq/net
 - [Untimed lite-07](/quest/m1/lite-untimed.md) - lite-07 encodes an absent timestamp in both languages; lite-05/06 write send time
-- [Untimed TS PES](/quest/m1/ts-pes-untimed.md) - a PES without a PTS imports untimed instead of at 0
+- [Plan: untimed verbatim PES](/quest/m1/plan-ts-pes-untimed.md) - decide how a verbatim TS track carries a PES that has no PTS, then write the implementation quest
 - [Data consumer timestamps](/quest/m1/data-consumer-timestamps.md) - json and binary consumers return each value's timestamp, in Rust and every binding; snapshots add `latest()` beside an in-order `next()`
 - [JS data consumer timestamps](/quest/m1/js-data-consumer-timestamps.md) - @moq/json and @moq/binary consumers return each value's timestamp, with snapshot `next()` and `latest()`
 - [Nested data configs](/quest/m1/data-config-nesting.md) - docs nest `BinaryConfig`/`JsonConfig` in an application section instead of flattening it

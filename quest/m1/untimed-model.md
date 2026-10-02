@@ -55,9 +55,13 @@ Things to look out for:
 - Several model decisions read "has a timestamp" as "has a frame".
   `group.rs`'s `poll_timestamp` is the clearest case, and `GroupExpiry` uses
   it. An untimed frame must still count as a frame there.
-- Live edge, reach and successor search (`track.rs`, `resume.rs`) skip
-  unstamped groups. Check that an untimed track neither stalls a cursor nor
-  replays everything.
+- The live edge skips unstamped groups. Reach and successor search
+  (`track.rs`, `resume.rs`) deliberately stop at the immediate successor and
+  leave the bound unknown while it is unstamped, because skipping ahead
+  could expire content that is still valid. An untimed successor keeps that
+  bound unknown for good, so the timed group before it is kept. Preserve
+  that, and check that an untimed track neither stalls a cursor nor replays
+  everything. Cover tracks that mix timed and untimed groups.
 - `track::Info.timescale` always has a value today. A relay subscribed to an
   IETF track without TIMESCALE currently announces one downstream. It must
   not claim a timeline the source never had.
@@ -73,9 +77,12 @@ Things to look out for:
 
   Media consumers that need a time refuse an untimed frame, except for the
   end-marker rule above.
-- FETCH_OK properties are discarded today
-  ([FETCH_OK properties](/quest/m1/fetch-ok-properties.md)), so fetched IETF
-  objects arrive untimed until that lands. That's correct, not a regression.
+- A joining or fill FETCH takes its units from SUBSCRIBE_OK and keeps its
+  timestamps. Only objects with neither track units nor object-level units
+  are untimed. A standalone FETCH has no units until
+  [FETCH_OK properties](/quest/m1/fetch-ok-properties.md) lands, so its
+  objects arrive untimed until then. Test that known units still yield
+  timestamps, alongside the untimed cases.
 
 Interop facts (2026-10-02):
 
