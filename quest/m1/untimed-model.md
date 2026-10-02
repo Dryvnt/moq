@@ -79,10 +79,11 @@ Things to look out for:
   end-marker rule above.
 - A joining or fill FETCH takes its units from SUBSCRIBE_OK and keeps its
   timestamps. Only objects with neither track units nor object-level units
-  are untimed. A standalone FETCH has no units until
-  [FETCH_OK properties](/quest/m1/fetch-ok-properties.md) lands, so its
-  objects arrive untimed until then. Test that known units still yield
-  timestamps, alongside the untimed cases.
+  are untimed. A standalone FETCH has no track units until
+  [FETCH_OK properties](/quest/m1/fetch-ok-properties.md) lands, so until
+  then only its objects with object-level units stay timed. Test that known
+  units, from the track or the object, still yield timestamps, alongside the
+  untimed cases.
 
 Interop facts (2026-10-02):
 
