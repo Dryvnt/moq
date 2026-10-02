@@ -27,6 +27,11 @@ Draft work:
   valid", and expiration's "reach" (the first frame timestamp of the next
   group) for an untimed group.
 - Check how a lite track that has no timescale says so on lite-07.
+- lite-07 varints carry the full 64 bits, so the shift can't represent the
+  top value: a DATAGRAM Timestamp of 2^64-1, or a delta whose zigzag
+  encoding is 2^64-1. Wrapping would turn either into the absence marker.
+  Recommended: the encoder refuses those values and the draft says so,
+  rather than widening the encoding for timestamps no real track reaches.
 
 Test: an untimed frame and an untimed datagram round-trip Rust-to-JS and
 JS-to-Rust on lite-07. lite-06 still receives a timestamp. Run
