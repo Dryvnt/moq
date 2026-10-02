@@ -73,7 +73,8 @@ QUIC studies there on that rule.
 - [Auth client CA](/quest/m1/relay-auth-client-ca.md) - on dev, `auth::Config::validate` and `init` take the client-CA flag, so no caller can skip the check
 - [Data track clock](/quest/m1/data-track-clock.md) - JSON and binary data tracks stamp on the catalog's clock at write time, matching the media's anchored clock
 - [Go and Dart doc samples](/quest/m1/doc-samples-go-dart.md) - Go and Dart doc samples compile against their wrappers
-- [Publishing never invents a timestamp](/quest/m1/publish-timestamp.md) - no Rust or binding publish API fills in a timestamp; an untimed payload goes out untimed, and moq-mux data producers take broadcast-clock timestamps
+- [Mux data timestamp](/quest/m1/mux-data-timestamp.md) - on dev, moq-mux JSON and binary producers take a broadcast-clock timestamp, with no ahead-of-now refusal
+- [Publishing never invents a timestamp](/quest/m1/publish-timestamp.md) - no Rust or binding publish API fills in a timestamp; an untimed payload goes out untimed
 - [JS publishing never invents a timestamp](/quest/m1/js-publish-timestamp.md) - the same in @moq/json, @moq/binary, and @moq/net
 - [Untimed model](/quest/m1/untimed-model.md) - on dev, moq-net frames and datagrams carry an absent timestamp to every subscriber; no receiver fills in arrival time
 - [JS untimed model](/quest/m1/js-untimed-model.md) - the same in @moq/net

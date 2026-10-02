@@ -1,4 +1,4 @@
-# [L] Publishing never invents a timestamp
+# [M] Publishing never invents a timestamp
 
 ## Goal
 
@@ -29,21 +29,11 @@ fill `Timestamp::now()` (moq-net's clock, not the broadcast's), and moq-mux's
   (see [Data consumer timestamps](/quest/m1/data-consumer-timestamps.md)).
 - moq-json (snapshot, stream, and window, whose `push` always stamps now) and
   moq-binary producers take `Timed<_, Timestamp>` and write `None` as untimed.
-- moq-mux data producers take `Timed<_, Timestamp>` on the broadcast clock,
-  the same contract as `container::Frame`, with no ahead-of-now check. A
-  caller already holding a broadcast-clock timestamp passes it as is: one
-  returned by a `clock::Lane` on the broadcast's `Anchor` (video + KLV from one
-  MPEG-TS program), or the `at` of a consumer's `Timed` it derived the value
-  from (MAVLink telemetry republished). A source clock running slightly fast
-  must not be refused.
-- `Clock::capture(Instant)` becomes public for callers holding a capture
-  `Instant`; it keeps refusing one ahead of now or before the epoch
-  (`Error::InvalidCapture`). `Clock::stamp` is deleted.
-  `catalog::data::Listing::record` samples `delay` and `jitter` only for timed
-  writes, and records zero delay for a timestamp ahead of now rather than
-  refusing it.
-- Document on the moq-mux producers that a carried-over timestamp lines up
-  with media only on a broadcast sharing the source's clock mapping.
+- moq-mux data producers already take `Timed<_, Timestamp>` on the broadcast
+  clock after [moq-mux data producers take a broadcast-clock timestamp](/quest/m1/mux-data-timestamp.md).
+  Here `None` stops meaning the clock's now and goes out untimed.
+  `Clock::stamp` is deleted. `catalog::data::Listing::record` samples `delay`
+  and `jitter` only for timed writes.
 - Publishers inside the repository (hang catalog snapshots, MSF, stats, room
   chat, examples) pass their clock's now explicitly.
 - moq-ffi: data producers take an optional timestamp in microseconds on the
@@ -61,14 +51,16 @@ fill `Timestamp::now()` (moq-net's clock, not the broadcast's), and moq-mux's
 - Docs: "stamped when written" in `doc/lib/rs/{moq-json,moq-binary}.md` and
   `rs/moq-net/src/model/timed.rs`, plus `doc/lib/{py,swift,kt,go,dart}`.
 
-The broadcast-clock input was requested by OneTooMany, who align KLV and
-MAVLink-derived telemetry with video.
+The broadcast-clock input, requested by OneTooMany, was split out into
+[moq-mux data producers take a broadcast-clock timestamp](/quest/m1/mux-data-timestamp.md) (2026-10-02),
+because it needs neither blocker below.
 
 Public API: breaking, on `dev`. Wire: none here; absence on the wire lands
 with the untimed implementation quests.
 
 ## Required
 
+- [moq-mux data producers take a broadcast-clock timestamp](/quest/m1/mux-data-timestamp.md) - changes the same producers' input type first, so the two signature changes land in order
 - [JSON and flate namespaces](/quest/m1/ffi-shape/json.md) - moves the data producers this changes, so the two breaks land in order rather than colliding
 - [moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md) - the model must hold an untimed payload before producers stop filling in now; until lite-07 encodes absence, a lite encoder writes its send time, as producers effectively do today
 
