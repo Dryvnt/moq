@@ -36,9 +36,11 @@ Decided (2026-10-02):
 
 Things to look out for:
 
-- The delay/jitter estimator takes a signed lateness. An ahead-of-now sample
-  can drag the broadcast-wide minimum down and inflate delay or jitter on
-  other tracks. Clamp it where it is sampled, and test it.
+- An ahead-of-now sample can drag the broadcast-wide delay minimum down and
+  inflate delay or jitter on other tracks. Decide "ahead of now" against the
+  catalog clock's current reading. Don't clamp the estimator's signed
+  lateness itself: it is measured from an arbitrary local epoch, where valid
+  samples can be negative. Test it.
 - Callers inside the repository (moq-ffi, moq-c) pass bare values and
   should compile unchanged. The changes are moq-mux's own tests and doc
   examples that use `.at(Instant)`.
