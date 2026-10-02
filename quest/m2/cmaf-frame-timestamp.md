@@ -26,7 +26,7 @@ shifts `trun` data offsets.
 - Check the TS exporter's verbatim carriage, which keeps PES PTS inside the
   payload. Rewrite those from the frame timestamp, or refuse a mismatch.
 - An untimed CMAF frame is refused once the frame timestamp is the
-  fragment's timeline (decided 2026-10-02 12:43 +02:00, with
+  fragment's timeline (decided 2026-10-02, with
   [moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md)).
 - `main`: a behavior fix with no API change.
 

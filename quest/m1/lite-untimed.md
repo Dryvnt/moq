@@ -14,7 +14,7 @@ DATAGRAM Timestamp by one, so 0 means absent. An absent frame doesn't move
 the delta baseline. Rejected: a bare 0 as a sentinel, which collides with a
 real pts of 0.
 
-Decided (2026-10-02 12:43 +02:00): one PR for both languages, after both
+Decided (2026-10-02): one PR for both languages, after both
 model quests. Shipping one language first would break Rust-JS interop on
 lite-07-wip in between.
 

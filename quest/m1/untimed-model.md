@@ -28,7 +28,7 @@ sentinel (collides with a real pts of 0), and `max_age` on max(wall, pts)
 (`max_age` stays media-time staleness, so a congestion stall can't age
 content out, and the pool's wall-clock expiry is the bound).
 
-Decided (2026-10-02 12:43 +02:00, planning this split):
+Decided (2026-10-02, planning this split):
 
 - An IETF object that carries its own TIMESCALE and Timestamp properties is
   timed, even when the track sent no TIMESCALE. The draft already allows an

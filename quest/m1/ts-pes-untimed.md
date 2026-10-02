@@ -8,7 +8,7 @@ case. `drafts/draft-lcurley-moq-mpegts.md` says the same.
 
 ## Plan
 
-Decided (2026-10-02 12:43 +02:00): its own quest, because it lands
+Decided (2026-10-02): its own quest, because it lands
 independently in a different crate. 0 is the sentinel that
 [moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md)
 rejected, because it collides with a real pts of 0.

@@ -10,7 +10,7 @@ timestamp stays untimed from publisher to consumer, and js/net never fills in
 
 ## Plan
 
-Decided (2026-10-02 12:43 +02:00): a hand-written change now, rather than
+Decided (2026-10-02): a hand-written change now, rather than
 waiting for [Generated @moq/net](/quest/m1/rs2ts/README.md). That line is
 long-running and would stall the JS timestamp quests. Whichever lands second
 absorbs the other. The semantics, the end-marker rule and the reasons are in
