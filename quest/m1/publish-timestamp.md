@@ -14,8 +14,9 @@ Swift, Kotlin, Go, Dart). Not libmoq, which the
 Decided (2026-10-01), reversing the 2026-09-30 "timestamp required" plan: the
 timestamp is optional end to end, on the wire and in every API, and absent
 means untimed. A library never substitutes now, wall clock, or arrival time.
-How absence travels on the wire is
-[Plan: untimed objects](/quest/m1/plan-untimed-objects.md); this quest
+How absence travels through the model and over the wire is
+[moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md) and
+[lite-07 encodes an absent timestamp](/quest/m1/lite-untimed.md); this quest
 removes every place that fills one in.
 
 Today `Timed.at: None` means "stamp when written": moq-json and moq-binary
@@ -48,7 +49,9 @@ fill `Timestamp::now()` (moq-net's clock, not the broadcast's), and moq-mux's
 - moq-ffi: data producers take an optional timestamp in microseconds on the
   broadcast clock, unchecked, as Rust does. moq-ffi exposes the broadcast
   clock's `now()` so callers have a value to stamp with. The raw frame and
-  datagram records' `timestamp_us` becomes optional instead of `default = 0`.
+  datagram records' `timestamp_us` is already optional after
+  [moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md); publishing one without it
+  goes out untimed instead of at `default = 0`.
 - Go (`go/wrapper/moq`) and Python (`py/moq-rs`) wrap only the JSON
   producers; [#4137](https://github.com/moq-dev/moq/pull/4137) added
   `publish_binary_snapshot` / `publish_binary_stream` to moq-ffi without
@@ -67,7 +70,7 @@ with the untimed implementation quests.
 ## Required
 
 - [JSON and flate namespaces](/quest/m1/ffi-shape/json.md) - moves the data producers this changes, so the two breaks land in order rather than colliding
-- [Plan: untimed objects](/quest/m1/plan-untimed-objects.md) - an untimed payload must travel as untimed before producers stop filling in now
+- [moq-net carries untimed frames faithfully](/quest/m1/untimed-model.md) - the model must hold an untimed payload before producers stop filling in now; until lite-07 encodes absence, a lite encoder writes its send time, as producers effectively do today
 
 ## Related
 
