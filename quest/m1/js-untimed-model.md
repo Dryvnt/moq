@@ -23,6 +23,10 @@ Things to look out for:
 - The track's drift, reach, staleness and expiry logic skips unstamped groups
   the way Rust does. Check that untimed frames still count as frames, and
   that an untimed track starts at the latest group.
+- A track's `Info.timescale` is required today, with a default. Like Rust,
+  a track that never declared one must not claim a timeline downstream.
+- A FETCH keeps timestamps whenever the track or the object gives units.
+  Only objects with neither are untimed.
 - `Frame.timestamp` and `Datagram.timestamp` become optional. Update callers
   in js/hang and js/loc (end markers) and anything in js/watch that reads
   them.

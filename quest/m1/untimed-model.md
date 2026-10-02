@@ -54,7 +54,10 @@ Things to look out for:
 
 - Several model decisions read "has a timestamp" as "has a frame".
   `group.rs`'s `poll_timestamp` is the clearest case, and `GroupExpiry` uses
-  it. An untimed frame must still count as a frame there.
+  it. An untimed frame must still count as a frame there. Key "has
+  presented" off frames written (or fin), and keep the group's
+  `Option<Timestamp>` for media time only, so an open group and a group of
+  untimed frames don't share one `None`.
 - The live edge skips unstamped groups. Reach and successor search
   (`track.rs`, `resume.rs`) deliberately stop at the immediate successor and
   leave the bound unknown while it is unstamped, because skipping ahead
@@ -77,13 +80,14 @@ Things to look out for:
 
   Media consumers that need a time refuse an untimed frame, except for the
   end-marker rule above.
-- A joining or fill FETCH takes its units from SUBSCRIBE_OK and keeps its
-  timestamps. Only objects with neither track units nor object-level units
-  are untimed. A standalone FETCH has no track units until
-  [FETCH_OK properties](/quest/m1/fetch-ok-properties.md) lands, so until
-  then only its objects with object-level units stay timed. Test that known
-  units, from the track or the object, still yield timestamps, alongside the
-  untimed cases.
+- Only objects with neither track units nor object-level units are untimed.
+  A FETCH learns track units from SUBSCRIBE_OK (a joining or fill FETCH),
+  from TRACK_STATUS ([Fetch without SUBSCRIBE](/quest/m1/ietf-fetch-only.md)),
+  or from [FETCH_OK properties](/quest/m1/fetch-ok-properties.md), whichever
+  applies. Until those last two land, a standalone FETCH keeps timestamps
+  only on objects that carry their own units. Test that known units, from
+  the track or the object, still yield timestamps, alongside the untimed
+  cases.
 
 Interop facts (2026-10-02):
 
