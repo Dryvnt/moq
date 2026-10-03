@@ -34,7 +34,7 @@ Things to look out for:
 Test: an untimed frame survives a JS subscribe on each receive path. Run
 `just test interop --all`.
 
-Public API: breaking, on `dev`. Wire: none.
+Public API: breaking. Wire: none.
 
 ## Related
 

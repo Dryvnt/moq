@@ -108,7 +108,7 @@ forwarded as untimed.
 Tests: each receive path (lite before lite-05, IETF subgroup, fetch and
 datagram) yields an untimed frame, and a relay forwards one untimed.
 
-Public API: breaking, on `dev` (`Frame`, `Datagram` and track info
+Public API: breaking (`Frame`, `Datagram` and track info
 timestamps become optional). Wire: no encoding change. Receive semantics on
 published drafts change as the timestamp draft says.
 

@@ -4,14 +4,14 @@
 
 A moq-mux JSON or binary data producer accepts a timestamp on the broadcast
 clock and publishes it as given, with no ahead-of-now refusal. That timestamp
-may come from a `clock::Lane` on the broadcast's `Anchor` (KLV next to video
-from one MPEG-TS program), or from the `at` of a consumer's `Timed` the value
-was derived from (MAVLink telemetry republished). Callers that hold a capture
+may be the source's own timestamp on a catalog clock anchored to that source
+(KLV next to video from one MPEG-TS program), or the `at` of a consumer's
+`Timed` the value was derived from (MAVLink telemetry republished). Callers that hold a capture
 `Instant` convert it with a public `Clock::capture`.
 
 Out of scope: what `at: None` means, which
 [Publishing never invents a timestamp](/quest/m1/publish-timestamp.md)
-changes, along with moq-json, moq-binary/moq-flate, moq-ffi and the
+changes, along with moq-json, moq-flate, moq-ffi and the
 bindings.
 
 ## Plan
@@ -49,11 +49,11 @@ Things to look out for:
   `doc/lib/rs/moq-mux.md`, which describes the `Instant` input and the
   refusal.
 
-Test: a timestamp from a `Lane` on the catalog's `Anchor` is published
-unchanged. A timestamp ahead of now is accepted, and other tracks' delay
+Test: a source timestamp on a catalog clock anchored to that source is
+published unchanged. A timestamp ahead of now is accepted, and other tracks' delay
 doesn't move.
 
-Public API: breaking, on `dev`. Wire: none.
+Public API: breaking. Wire: none.
 
 ## Related
 
