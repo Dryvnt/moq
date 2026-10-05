@@ -38,7 +38,11 @@ is.
 
 Test: a model test in `resume.rs` failing over an all-untimed track with an
 abandoned group, plus one where the successor is untimed on a timed track.
-Both fail without the fix.
+Both fail without the fix. Run each against a cold route and against one
+whose copy already caches untimed groups past the resumed one, so a cursor
+that skips ahead can't hide the stall. #4822 is changing `Cursor::new` so an
+explicit start is honoured on untimed tracks; build on that, not on the
+older jump to the latest untimed group.
 
 Public API: none. Wire: none.
 

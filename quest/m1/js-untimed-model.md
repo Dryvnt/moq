@@ -29,8 +29,9 @@ Things to look out for:
   Only objects with neither are untimed.
 - On drafts 14-16, where SUBSCRIBE_OK can't carry TIMESCALE, the publisher
   writes an object-scope TIMESCALE beside each Timestamp (the `stamped` path
-  in `js/net/src/ietf/publisher.ts`), as Rust does per [IETF timestamp
-  units](/quest/m1/ietf-timestamp-units.md).
+  in `js/net/src/ietf/publisher.ts`), as Rust does once #4822 lands. This
+  replaces the JS half of [IETF timestamp
+  units](/quest/m1/ietf-timestamp-units.md), which planned to send none there.
 - `Frame.timestamp` and `Datagram.timestamp` become optional. Update callers
   in js/hang and js/loc (end markers) and anything in js/watch that reads
   them.
