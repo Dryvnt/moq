@@ -62,20 +62,26 @@ Decided (2026-10-05):
   capture-only catalog would never publish). Fixing the clock at catalog
   creation is rejected too: even a lone importer would carry frame timestamps
   that disagree with its `tfdt`.
-- One source's offset lives on a public `catalog::Source` handle, separate
-  from the publication gate: `catalog.source()` returns a clonable handle for
-  one PTS base, and `source.reserve()` mints a `Reserved` gated as today that
-  shares the source's offset. The first anchor through any of them sets it.
-  `catalog.reserve()` keeps a fresh offset per call. Holding a `Source` never
+- One source's offset lives on a public `catalog::Input` handle, separate
+  from the publication gate: `catalog.input()` returns a clonable handle for
+  one PTS base, and `input.reserve()` mints a `Reserved` gated as today that
+  shares the input's offset. The first anchor through any of them sets it.
+  `catalog.reserve()` keeps a fresh offset per call. Holding an `Input` never
   withholds the catalog. moq-hls import holds one for the whole import, so its
   renditions (separate fMP4 importers on one PTS base) and every replacement
   importer on an `EXT-X-MAP` change share one offset; separate offsets would
-  shift each by its first frame's arrival gap. The name is a proposal for the
-  maintainer.
+  shift each by its first frame's arrival gap. Named `Input`, not `Source`,
+  which would clash with the public `moq_mux::Source`; `Timebase` was the
+  other candidate.
 - Rejected: sharing the offset through `Reserved` clones. A live `Reserved`
   withholds the initial catalog, so a handle kept for later importers would
   hold it for the whole import. Also rejected: importers handing the offset
   to each other (`with_offset` on all four).
+- A `with_clock` catalog is fixed from the start, so every importer gets an
+  offset, the first included. Otherwise a later importer could end up with a
+  negative timestamp. This drops the promise that a `with_clock` PTS zero
+  names a recording's real start. Rejected: the first importer keeps its PTS
+  and only later ones shift, and no `with_clock` importer shifts.
 - One payload exception: an SCTE-35 section on a section-framed verbatim track
   absorbs the offset in its `pts_adjustment` (modulo 2^33, at 90 kHz), with
   `CRC_32` recomputed. Its `pts_time` sits on the source PTS base, and nothing
@@ -94,18 +100,23 @@ Guidance:
 
 - The offset is signed: a stream starting at 3600 s on a clock reading 10 s
   shifts down. Refuse a frame that would land below zero rather than clamp it.
-- A `with_clock` catalog is fixed from the start, so its importers offset too.
-  Today they publish verbatim PTS on a clock they didn't place.
-- Document on `catalog::Producer::clock` that taking the clock fixes it, and
-  fix `doc/lib/rs/moq-mux.md`'s promise that a data track created before the
-  first frame follows the anchor.
+- Docs: document on `catalog::Producer::clock` that taking the clock fixes
+  it. Fix every doc that says the clock re-anchors or that `with_clock` keeps
+  PTS verbatim: `Config::with_clock` in `catalog/producer.rs`,
+  `doc/lib/rs/moq-mux.md` (the importer paragraph: a data track created before
+  the first frame following the anchor, and a `with_clock` zero naming the
+  real start), `doc/setup/upgrade.md` (pinning with `with_clock` when the
+  source's zero is known, and reading `catalog.clock()` at write time because
+  an importer re-anchors it), and the `binary.rs` module doc's "read at write
+  time" note. Replace `with_clock_names_the_contents_real_start` with a test
+  that a `with_clock` catalog's first importer is shifted onto it.
 - Test: a data track registered before a container's first frame, then a
   container starting at a nonzero PTS: the clock never moves, and the
   container's frames land at now. This rewrites
   `a_write_follows_the_anchored_clock` (`binary.rs`, `json.rs`) and
   `an_anchor_is_not_jitter` (`binary.rs`), which create a data track and then
   anchor.
-- Test: moq-hls import receives its initial catalog while its `Source` is
+- Test: moq-hls import receives its initial catalog while its `Input` is
   alive, then replaces a rendition's importer, and the replacement keeps the
   same offset.
 - Test: a TS import carrying a `splice_insert` joins a clock already in use. In
@@ -113,14 +124,14 @@ Guidance:
   the splice point, and the section's CRC verifies.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
-  reverse order: an importer first keeps its PTS verbatim. A passthrough
-  fragment whose `tfdt` disagrees with its frame timestamp decodes at the frame
-  timestamp, in Rust and JS.
+  reverse order: an importer first on a default clock keeps its PTS verbatim.
+  A passthrough fragment whose `tfdt` disagrees with its frame timestamp
+  decodes at the frame timestamp, in Rust and JS.
 
-Public API: `catalog::Source`, `catalog::Producer::source`, and
-`Source::reserve` are new. `catalog::Producer::clock()` and the first publish
-now fix the mapping,
-and importers no longer publish verbatim PTS when the clock was already taken.
+Public API: `catalog::Input`, `catalog::Producer::input`, and
+`Input::reserve` are new. `catalog::Producer::clock()` and the first publish
+now fix the mapping, and importers no longer publish verbatim PTS when the
+clock was already taken or set with `Config::with_clock`.
 Wire: none.
 
 ## Required

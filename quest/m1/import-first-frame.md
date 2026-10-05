@@ -20,8 +20,8 @@ clock and offsets that container instead.
 
 The anchor is unreleased, and this breaks an in-tree path (an fMP4 or MKV
 import read by moq-hls export), so it lands before the next release cut.
-Requested by an external consumer (OneTooMany); scope and milestone are
-proposals for the maintainer.
+Requested by an external consumer (OneTooMany). Ranked first in m1, ahead of
+shared-clock and cmaf-frame-timestamp (maintainer, 2026-10-05).
 
 Decided (2026-10-05):
 
