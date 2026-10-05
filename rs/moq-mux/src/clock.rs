@@ -3,7 +3,8 @@
 //! Create one [`Clock`] per broadcast and hand copies to every producer: because they share a
 //! timeline, frames captured at the same instant get the same timestamp, keeping concurrently
 //! produced tracks (e.g. audio and video capture on separate threads) in sync. It is `Copy`, so
-//! handing it out is cheap.
+//! handing it out is cheap. A copy is a snapshot, though: beside a container importer, which
+//! re-anchors the catalog's clock on its first frame, read the catalog's clock at write time instead.
 //!
 //! The clock also owns the broadcast's wall mapping, advertised at the catalog root as
 //! `clock: { wall, timescale }`: `wall` is the wall-clock time of PTS zero in
@@ -42,6 +43,11 @@ fn wall_clock(wall: SystemTime) -> crate::Result<hang::catalog::Clock> {
 ///
 /// Copies share the timeline and the wall mapping, so handing them to several producers keeps
 /// the broadcast on one clock.
+///
+/// A copy goes stale when a container importer's first frame re-anchors the catalog's clock (see
+/// [`Config::with_clock`](crate::catalog::Config::with_clock)): it keeps mapping onto the old
+/// timeline, misaligning everything it captures. To [`capture`](Self::capture) beside an importer,
+/// use [`catalog::Producer::clock`](crate::catalog::Producer::clock) read at write time.
 #[derive(Clone, Copy, Debug)]
 pub struct Clock {
 	/// A monotonic instant, and what the clock read then in micros.

@@ -516,10 +516,11 @@ mod test {
 		assert_eq!(stamps(&mut subscriber), [3_600_040, 3_700_000]);
 	}
 
-	/// A timestamp ahead of now counts as zero delay. Measured as given it would undercut every
-	/// real flush and read as delay on the other tracks.
+	/// A timestamp ahead of now counts as on time: its track advertises no delay, and another track
+	/// is measured against it as against any on-time track. Measured as given, it would undercut
+	/// every real flush and inflate the other track's delay by the hour it runs fast.
 	#[test]
-	fn an_ahead_timestamp_moves_no_other_delay() {
+	fn an_ahead_timestamp_counts_as_on_time() {
 		let (mut broadcast, catalog) = catalog();
 		let mut slow = catalog
 			.binary_stream(track(&mut broadcast, "slow"), Config::default())
