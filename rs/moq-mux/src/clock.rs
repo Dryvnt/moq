@@ -108,7 +108,7 @@ impl Clock {
 	///
 	/// Refuses an instant ahead of now, which would claim the payload reached the transport before
 	/// it existed, and one before PTS zero, which no timestamp can name.
-	pub(crate) fn capture(&self, at: Instant) -> crate::Result<moq_net::Timestamp> {
+	pub fn capture(&self, at: Instant) -> crate::Result<moq_net::Timestamp> {
 		if at > Instant::now() {
 			return Err(crate::Error::InvalidCapture);
 		}
@@ -120,23 +120,6 @@ impl Clock {
 				.ok_or(crate::Error::InvalidCapture)?,
 		};
 		Ok(moq_net::Timestamp::from_micros(micros).expect("an instant elapsed duration fits in a timestamp"))
-	}
-
-	/// Map a payload's capture instant onto this clock, stamping an untimed payload now, so timed
-	/// and untimed writes share one timeline. Also returns the capture time, if there was one.
-	pub(crate) fn stamp<P>(
-		&self,
-		timed: moq_net::Timed<P, Instant>,
-	) -> crate::Result<(moq_net::Timed<P>, Option<moq_net::Timestamp>)> {
-		let captured = timed.at.map(|at| self.capture(at)).transpose()?;
-		let at = captured.unwrap_or_else(|| self.now());
-		Ok((
-			moq_net::Timed {
-				value: timed.value,
-				at: Some(at),
-			},
-			captured,
-		))
 	}
 
 	/// Units per second for [`wall`](Self::wall): [`TIMESCALE`](Self::TIMESCALE).
