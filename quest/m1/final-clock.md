@@ -37,7 +37,7 @@ Decided (2026-10-05):
   (`Producer::data_entry` holds its reservation only for `init`), so a
   container set up after one, in any order moq-c and moq-ffi allow, joins a
   clock it didn't place. moq-hls import's later renditions also reach it, and
-  share the first rendition's offset through their `Reserved`.
+  share the first rendition's offset through shared-clock's `catalog::Source`.
 - Rejected: a late anchor as a no-op with verbatim PTS (an fMP4 an hour into
   its `tfdt`, or a TS PTS up to about 26.5 h, lands that far off the clock), a
   warning or a refusal until shared-clock lands (a regression on `main` for an
@@ -65,7 +65,7 @@ Guidance:
 - moq-hls import mints each rendition's importer lazily, so the first
   rendition can publish before later ones exist. The clock is still final:
   later renditions take the first one's offset (zero) through their shared
-  `Reserved`, so they land on the same timeline.
+  `catalog::Source`, so they land on the same timeline.
 - Tests (fail on `main` for fMP4, MKV, and Opus-only TS): for each of fMP4,
   MKV, FLV, and TS, a catalog consumer's first snapshot carries the anchored
   clock and later snapshots never change it. The TS case is Opus-only with a

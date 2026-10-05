@@ -46,11 +46,20 @@ Decided (2026-10-05):
   offset: once the first publish fixes the clock, a container set up after a
   data track or catalog section (any order moq-c and moq-ffi allow) joins a
   clock it didn't place.
-- The offset lives on the `Reserved` handle: the first anchor through any clone
-  sets it, and every clone uses it. moq-hls import's renditions are separate
-  fMP4 importers on one PTS base, so it takes one `reserve()` per source and
-  clones it for each rendition; separate offsets would shift each rendition
-  by its first frame's arrival gap. No new public items.
+- One source's offset lives on a public `catalog::Source` handle, separate
+  from the publication gate: `catalog.source()` returns a clonable handle for
+  one PTS base, and `source.reserve()` mints a `Reserved` gated as today that
+  shares the source's offset. The first anchor through any of them sets it.
+  `catalog.reserve()` keeps a fresh offset per call. Holding a `Source` never
+  withholds the catalog. moq-hls import holds one for the whole import, so its
+  renditions (separate fMP4 importers on one PTS base) and every replacement
+  importer on an `EXT-X-MAP` change share one offset; separate offsets would
+  shift each by its first frame's arrival gap. The name is a proposal for the
+  maintainer.
+- Rejected: sharing the offset through `Reserved` clones. A live `Reserved`
+  withholds the initial catalog, so a handle kept for later importers would
+  hold it for the whole import. Also rejected: importers handing the offset
+  to each other (`with_offset` on all four).
 
 Guidance:
 
@@ -59,13 +68,17 @@ Guidance:
 - A `with_clock` catalog is fixed from the start, so its importers offset too.
   Today they publish verbatim PTS on a clock they didn't place.
 - Document on `catalog::Producer::clock` that taking the clock fixes it.
+- Test: moq-hls import receives its initial catalog while its `Source` is
+  alive, then replaces a rendition's importer, and the replacement keeps the
+  same offset.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
   reverse order: an importer first keeps its PTS verbatim. A passthrough
   fragment whose `tfdt` disagrees with its frame timestamp decodes at the frame
   timestamp, in Rust and JS.
 
-Public API: no new items. `catalog::Producer::clock()` now fixes the mapping,
+Public API: `catalog::Source`, `catalog::Producer::source`, and
+`Source::reserve` are new. `catalog::Producer::clock()` now fixes the mapping,
 and importers no longer publish verbatim PTS when the clock was already taken.
 Wire: none.
 
