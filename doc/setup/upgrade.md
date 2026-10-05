@@ -41,6 +41,10 @@ These land with the next breaking release, not the 2026-09-23 train.
   `SourceMap` (#4667) are gone, along with the importers' `live()`. Publish the
   source's own timestamps and let the catalog clock map them to wall time;
   pin that mapping with `Config::with_clock` when the source's zero is known.
+- **CMAF decodes at the frame timestamp.** A fragment's earliest sample
+  presents at its moq-net frame timestamp; `tfdt` only orders the samples. In
+  TypeScript, `Container.Format.decode` and `Cmaf.decodeDataSegment` take that
+  timestamp: pass `frame.timestamp` alongside `frame.payload`.
 
 ## Wire
 
