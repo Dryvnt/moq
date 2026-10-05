@@ -76,6 +76,19 @@ Decided (2026-10-05):
   withholds the initial catalog, so a handle kept for later importers would
   hold it for the whole import. Also rejected: importers handing the offset
   to each other (`with_offset` on all four).
+- One payload exception: an SCTE-35 section on a section-framed verbatim track
+  absorbs the offset in its `pts_adjustment` (modulo 2^33, at 90 kHz), with
+  `CRC_32` recomputed. Its `pts_time` sits on the source PTS base, and nothing
+  downstream can recover the offset: the section's frame timestamp is the video
+  clock at arrival plus that same offset. The field keeps its size and is clear
+  even in an encrypted section, so TS export and the typed cues of
+  [#2279](/quest/m2/2279-hang-typed-scte-35-ad-cue-signaling-carried-opaquely.md)
+  read splice times on the broadcast timeline with no change of their own.
+- Rejected for SCTE-35: recording the offset in the `mpegts` catalog section for
+  TS export to add (a new catalog field every typed consumer would also have to
+  apply), refusing to offset a TS import that carries sections (SCTE-35 could
+  never share a clock), and deferring to #2279 (this quest is what makes the
+  splice times stale).
 
 Guidance:
 
@@ -95,6 +108,9 @@ Guidance:
 - Test: moq-hls import receives its initial catalog while its `Source` is
   alive, then replaces a rendition's importer, and the replacement keeps the
   same offset.
+- Test: a TS import carrying a `splice_insert` joins a clock already in use. In
+  its TS export, `pts_time + pts_adjustment` lands on the exported video PTS of
+  the splice point, and the section's CRC verifies.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
   reverse order: an importer first keeps its PTS verbatim. A passthrough
