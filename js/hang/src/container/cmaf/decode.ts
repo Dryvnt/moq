@@ -324,11 +324,16 @@ export function decodeTimestamp(segment: Uint8Array, init: InitSegment): Time.Mi
  * per ISO/IEC 14496-12 §8.8.7. The init segment's trex defaults are required for
  * fragments where the encoder only set them once in moov (e.g. gstreamer passthrough).
  *
+ * The moq-net `timestamp` is the broadcast timeline: the fragment's earliest sample presents at
+ * it. `tfdt` and the composition offsets only place the samples relative to each other, since a
+ * publisher may move a passthrough track to another timeline without rewriting the payload.
+ *
  * @param segment - The moof + mdat data
  * @param init - Parsed init segment (provides timescale and trex defaults)
+ * @param timestamp - The moq-net frame timestamp carrying this segment
  * @returns Array of decoded samples
  */
-export function decodeDataSegment(segment: Uint8Array, init: InitSegment): Sample[] {
+export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timestamp: Time.Timestamp): Sample[] {
 	// Cast to ParsedIsoBox[] since the library's return type changes with readers
 	const boxes = readIsoBoxes(toArrayBuffer(segment), { readers: DATA_READERS }) as ParsedIsoBox[];
 
@@ -362,6 +367,7 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment): Sampl
 	}
 
 	const samples: Sample[] = [];
+	const ptss: number[] = [];
 
 	// trun.dataOffset is an offset from the base data offset (typically moof start) to the first sample.
 	// For simple CMAF segments where moof is followed immediately by mdat, this equals moof.size + 8.
@@ -406,10 +412,7 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment): Sampl
 		const data = new Uint8Array(mdatData.slice(dataOffset, dataOffset + sampleSize));
 		dataOffset += sampleSize;
 
-		// Calculate presentation timestamp in microseconds
-		// PTS = (decode_time + composition_offset) * 1_000_000 / timescale
-		const pts = decodeTime + compositionOffset;
-		const timestamp = Math.round((pts * 1_000_000) / init.timescale);
+		ptss.push(decodeTime + compositionOffset);
 		const duration = Math.round((sampleDuration * 1_000_000) / init.timescale);
 
 		// Check if keyframe (sample_is_non_sync_sample flag is bit 16)
@@ -417,14 +420,16 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment): Sampl
 		// audio sample is a sync sample, and the group start is the consumer's to mark.
 		const keyframe = init.kind === "video" && (sampleFlags === 0 || (sampleFlags & 0x00010000) === 0);
 
-		samples.push({
-			data,
-			timestamp,
-			keyframe,
-			duration,
-		});
+		// Set below, once the earliest presentation time is known.
+		samples.push({ data, timestamp: 0, keyframe, duration });
 
 		decodeTime += sampleDuration;
+	}
+
+	const earliest = Math.min(...ptss);
+	const anchor = Math.round(timestamp.asMicros());
+	for (const [i, sample] of samples.entries()) {
+		sample.timestamp = anchor + Math.round(((ptss[i] - earliest) * 1_000_000) / init.timescale);
 	}
 
 	return samples;

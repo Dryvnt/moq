@@ -175,7 +175,7 @@ export class Consumer {
 				if (!next) break;
 				group.empty = false;
 
-				const decoded = this.#format.decode(next.payload);
+				const decoded = this.#format.decode(next.payload, next.timestamp);
 
 				for (const sample of decoded) {
 					const marker = this.#format.end?.(sample) !== undefined;

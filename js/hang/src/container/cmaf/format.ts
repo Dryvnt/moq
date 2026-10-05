@@ -12,9 +12,9 @@ export class Format implements ContainerFormat {
 		this.#init = init;
 	}
 
-	/** Decode one CMAF fragment into its media frames. */
-	decode(frame: Uint8Array): Frame[] {
-		return decodeDataSegment(frame, this.#init).map((s) => ({
+	/** Decode one CMAF fragment, presenting its earliest sample at the moq-net `timestamp`. */
+	decode(payload: Uint8Array, timestamp: Time.Timestamp): Frame[] {
+		return decodeDataSegment(payload, this.#init, timestamp).map((s) => ({
 			payload: s.data,
 			timestamp: s.timestamp as Time.Micro,
 			keyframe: s.keyframe,

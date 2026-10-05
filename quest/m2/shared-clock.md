@@ -50,17 +50,11 @@ Guidance:
 - Document on `catalog::Producer::clock` that taking the clock fixes it.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
-  reverse order: an importer first keeps its PTS verbatim. A passthrough
-  fragment whose `tfdt` disagrees with its frame timestamp decodes at the frame
-  timestamp, in Rust and JS.
+  reverse order: an importer first keeps its PTS verbatim.
 
 Public API: no new items. `catalog::Producer::clock()` now fixes the mapping,
 and importers no longer publish verbatim PTS when the clock was already taken.
 Wire: none.
-
-## Required
-
-- [CMAF frame timestamp](/quest/m2/cmaf-frame-timestamp.md) - decoders honour an offset frame timestamp on passthrough tracks
 
 ## Related
 

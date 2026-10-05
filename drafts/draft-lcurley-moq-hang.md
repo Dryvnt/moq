@@ -606,7 +606,9 @@ For example, h.264 with no `description` field would be annex.b encoded, while h
 For a text track, the remainder is the cue in the track's declared `format` (for example a `WEBVTT` segment).
 
 ## cmaf
-Each frame is a complete fragmented MP4 fragment (`moof`+`mdat`), carrying its own timestamps.
+Each frame is a complete fragmented MP4 fragment (`moof`+`mdat`).
+The frame timestamp is the presentation time of the fragment's earliest sample; the fragment's own timestamps only place its samples relative to that sample.
+A consumer MUST present each sample at the frame timestamp plus its offset from the earliest sample, even when `tfdt` says otherwise.
 Audio samples MUST be marked as sync samples, including samples inside a group.
 A sync sample does not declare an audio group boundary; the publisher chooses those boundaries.
 
@@ -1093,6 +1095,7 @@ This document has no IANA actions.
 
 - Defined encoder `jitter` as flush lateness above the rendition's own recent minimum, replacing fixed frame-duration hints; container batches retain media-span estimates.
 - Clarified that CMAF audio samples are sync samples independently of publisher group boundaries.
+- Timed CMAF samples from the frame timestamp, which is the fragment's earliest presentation time; `tfdt` is only relative within the fragment.
 - Clarified that container importers can estimate jitter from batch media spans without measuring input wait time.
 - Specified the `jitter` field's computation: the publisher's own structure rather than the network, rounded up to whole milliseconds, never `0` (a consumer treats `0` as absent), and never lowered once advertised.
 - For video, an empty codec payload is the exclusive end of the frame before it. A video publisher SHOULD end each group with one when the exclusive end is known. Audio retains its terminal-trimming marker before codec drain packets.

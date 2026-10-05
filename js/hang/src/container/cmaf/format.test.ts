@@ -1,0 +1,80 @@
+import { expect, test } from "bun:test";
+import { Time } from "@moq/net";
+import type { InitSegment } from "./decode.ts";
+import { Format } from "./format.ts";
+
+const TIMESCALE = 90_000;
+const INIT: InitSegment = {
+	timescale: TIMESCALE,
+	trackId: 1,
+	kind: "video",
+	defaultSampleDuration: 0,
+	defaultSampleSize: 0,
+	defaultSampleFlags: 0,
+};
+
+function box(type: string, ...parts: Uint8Array[]): Uint8Array {
+	const size = 8 + parts.reduce((sum, part) => sum + part.byteLength, 0);
+	const out = new Uint8Array(size);
+	const view = new DataView(out.buffer);
+	view.setUint32(0, size);
+	out.set(new TextEncoder().encode(type), 4);
+	let offset = 8;
+	for (const part of parts) {
+		out.set(part, offset);
+		offset += part.byteLength;
+	}
+	return out;
+}
+
+function u32(...values: number[]): Uint8Array {
+	const out = new Uint8Array(values.length * 4);
+	const view = new DataView(out.buffer);
+	for (const [i, value] of values.entries()) view.setInt32(i * 4, value);
+	return out;
+}
+
+/** A moof+mdat at `tfdt` ticks whose samples are `[duration, cts]` pairs in decode order. */
+function fragment(tfdt: number, samples: [number, number][]): Uint8Array {
+	const moof = (dataOffset: number) =>
+		box(
+			"moof",
+			box("mfhd", u32(0, 0)),
+			box(
+				"traf",
+				box("tfhd", u32(0x020000, 1)),
+				box("tfdt", u32(0x01000000, Math.floor(tfdt / 2 ** 32), tfdt % 2 ** 32)),
+				// Version 1 (signed CTS): data-offset, sample-duration, sample-size, and CTS present.
+				box("trun", u32(0x01000b01, samples.length, dataOffset), ...samples.map(([d, cts]) => u32(d, 1, cts))),
+			),
+		);
+	const header = moof(0);
+	return new Uint8Array([...moof(header.byteLength + 8), ...box("mdat", new Uint8Array(samples.length))]);
+}
+
+// The frame timestamp is the broadcast timeline: a passthrough fragment whose `tfdt` still
+// carries its source PTS decodes at the frame timestamp, keeping its B-frame order.
+test("CmafFormat times samples from the frame timestamp", () => {
+	const source = 3_600 * TIMESCALE;
+	// I, P, B in decode order, presenting at +0, +2, and +1 frames.
+	const segment = fragment(source, [
+		[3000, 3000],
+		[3000, 6000],
+		[3000, 0],
+	]);
+
+	const frames = new Format(INIT).decode(segment, Time.Timestamp.fromMillis(10_000));
+	expect(frames.map((f) => f.timestamp)).toEqual([10_000_000, 10_066_667, 10_033_333] as Time.Micro[]);
+});
+
+// A fragment can open on a sample that presents after a later one (open-GOP leading pictures,
+// or a cut mid-GOP). The earliest presentation time is the anchor, not the first sample.
+test("CmafFormat anchors the earliest presentation time", () => {
+	const segment = fragment(0, [
+		[3000, 6000],
+		[3000, 0],
+	]);
+
+	const frames = new Format(INIT).decode(segment, Time.Timestamp.fromMillis(5_000));
+	expect(frames.map((f) => f.timestamp)).toEqual([5_033_333, 5_000_000] as Time.Micro[]);
+});

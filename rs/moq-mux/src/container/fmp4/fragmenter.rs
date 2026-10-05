@@ -303,7 +303,8 @@ mod tests {
 
 		for (fragment, expected) in fragments.iter().zip(&input) {
 			let decoded =
-				super::super::decode(fragment.data.clone(), timescale, crate::container::fmp4::Kind::Video).unwrap();
+				super::super::decode_at_tfdt(fragment.data.clone(), timescale, crate::container::fmp4::Kind::Video)
+					.unwrap();
 			assert_eq!(decoded.len(), 1);
 			assert_eq!(decoded[0].timestamp, expected.timestamp, "pts survives the reorder");
 		}
