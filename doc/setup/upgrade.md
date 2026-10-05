@@ -45,6 +45,7 @@ These land with the next breaking release, not the 2026-09-23 train.
   presents at its moq-net frame timestamp; `tfdt` only orders the samples. In
   TypeScript, `Container.Format.decode` and `Cmaf.decodeDataSegment` take that
   timestamp: pass `frame.timestamp` alongside `frame.payload`.
+  `Cmaf.decodeTimestamp` is gone; the frame timestamp is the fragment's time.
 
 ## Wire
 

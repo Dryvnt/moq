@@ -299,25 +299,6 @@ function extractAudioSpecificConfig(esds: Uint8Array): Uint8Array | undefined {
 }
 
 /**
- * Extract just the base media decode time from a data segment (moof + mdat).
- * This is a lighter-weight function when you only need the timestamp.
- *
- * @param segment - The moof + mdat data
- * @param init - Parsed init segment (provides timescale)
- * @returns The base media decode time in microseconds
- */
-export function decodeTimestamp(segment: Uint8Array, init: InitSegment): Time.Micro {
-	const boxes = readIsoBoxes(toArrayBuffer(segment), { readers: DATA_READERS }) as ParsedIsoBox[];
-
-	// Find moof > traf > tfdt for base media decode time
-	const tfdt = findBox(boxes, isBoxType<TrackFragmentBaseMediaDecodeTimeBox & ParsedIsoBox>("tfdt"));
-	const baseDecodeTime = tfdt?.baseMediaDecodeTime ?? 0;
-
-	// Convert to microseconds
-	return ((baseDecodeTime * 1_000_000) / init.timescale) as Time.Micro;
-}
-
-/**
  * Parse a data segment (moof + mdat) to extract raw samples.
  *
  * Sample duration/size/flags fall back through trun → tfhd → trex (init segment)
@@ -347,9 +328,12 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timest
 	const defaultSize = tfhd?.defaultSampleSize ?? init.defaultSampleSize;
 	const defaultFlags = tfhd?.defaultSampleFlags ?? init.defaultSampleFlags;
 
-	// Find moof > traf > trun for sample info
-	const trun = findBox(boxes, isBoxType<TrackRunBox & ParsedIsoBox>("trun"));
-	if (!trun) {
+	// Find moof > traf > trun for sample info. A traf may split its samples across several runs,
+	// which continue one decode timeline and one mdat.
+	const traf = findBox(boxes, isBoxType<ParsedIsoBox>("traf"));
+	// biome-ignore lint/suspicious/noExplicitAny: ISO box structure varies
+	const truns = ((traf as any)?.boxes ?? []).filter(isBoxType<TrackRunBox & ParsedIsoBox>("trun"));
+	if (truns.length === 0) {
 		throw new Error("No trun box found in data segment");
 	}
 
@@ -378,58 +362,60 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timest
 	let dataOffset = 0;
 	let decodeTime = baseDecodeTime;
 
-	for (let i = 0; i < trun.sampleCount; i++) {
-		const sample: TrackRunSample = trun.samples[i] ?? {};
+	for (const trun of truns) {
+		for (let i = 0; i < trun.sampleCount; i++) {
+			const sample: TrackRunSample = trun.samples[i] ?? {};
 
-		const sampleSize = sample.sampleSize ?? defaultSize;
-		const sampleDuration = sample.sampleDuration ?? defaultDuration;
+			const sampleSize = sample.sampleSize ?? defaultSize;
+			const sampleDuration = sample.sampleDuration ?? defaultDuration;
 
-		// Validate sample size - must be positive to produce valid data
-		if (sampleSize <= 0) {
-			throw new Error(`Invalid sample size ${sampleSize} for sample ${i} in trun`);
+			// Validate sample size - must be positive to produce valid data
+			if (sampleSize <= 0) {
+				throw new Error(`Invalid sample size ${sampleSize} for sample ${i} in trun`);
+			}
+
+			// Duration 0 is valid for single-sample CMAF fragments where duration
+			// is implicit. Negative duration would indicate corrupt data.
+			if (sampleDuration < 0) {
+				throw new Error(`Invalid sample duration ${sampleDuration} for sample ${i} in trun`);
+			}
+
+			// Bounds check before slicing to prevent reading past mdat data
+			if (dataOffset + sampleSize > mdatData.length) {
+				throw new Error(
+					`Sample ${i} would overflow mdat: offset=${dataOffset}, size=${sampleSize}, mdatLength=${mdatData.length}`,
+				);
+			}
+
+			const sampleFlags =
+				i === 0 && trun.firstSampleFlags !== undefined
+					? trun.firstSampleFlags
+					: (sample.sampleFlags ?? defaultFlags);
+			const compositionOffset = sample.sampleCompositionTimeOffset ?? 0;
+
+			// Extract sample data
+			const data = new Uint8Array(mdatData.slice(dataOffset, dataOffset + sampleSize));
+			dataOffset += sampleSize;
+
+			ptss.push(decodeTime + compositionOffset);
+			const duration = Math.round((sampleDuration * 1_000_000) / init.timescale);
+
+			// Check if keyframe (sample_is_non_sync_sample flag is bit 16)
+			// If flag is 0, treat as keyframe for safety. Audio never reports one: every
+			// audio sample is a sync sample, and the group start is the consumer's to mark.
+			const keyframe = init.kind === "video" && (sampleFlags === 0 || (sampleFlags & 0x00010000) === 0);
+
+			// Set below, once the earliest presentation time is known.
+			samples.push({ data, timestamp: 0, keyframe, duration });
+
+			decodeTime += sampleDuration;
 		}
-
-		// Duration 0 is valid for single-sample CMAF fragments where duration
-		// is implicit. Negative duration would indicate corrupt data.
-		if (sampleDuration < 0) {
-			throw new Error(`Invalid sample duration ${sampleDuration} for sample ${i} in trun`);
-		}
-
-		// Bounds check before slicing to prevent reading past mdat data
-		if (dataOffset + sampleSize > mdatData.length) {
-			throw new Error(
-				`Sample ${i} would overflow mdat: offset=${dataOffset}, size=${sampleSize}, mdatLength=${mdatData.length}`,
-			);
-		}
-
-		const sampleFlags =
-			i === 0 && trun.firstSampleFlags !== undefined
-				? trun.firstSampleFlags
-				: (sample.sampleFlags ?? defaultFlags);
-		const compositionOffset = sample.sampleCompositionTimeOffset ?? 0;
-
-		// Extract sample data
-		const data = new Uint8Array(mdatData.slice(dataOffset, dataOffset + sampleSize));
-		dataOffset += sampleSize;
-
-		ptss.push(decodeTime + compositionOffset);
-		const duration = Math.round((sampleDuration * 1_000_000) / init.timescale);
-
-		// Check if keyframe (sample_is_non_sync_sample flag is bit 16)
-		// If flag is 0, treat as keyframe for safety. Audio never reports one: every
-		// audio sample is a sync sample, and the group start is the consumer's to mark.
-		const keyframe = init.kind === "video" && (sampleFlags === 0 || (sampleFlags & 0x00010000) === 0);
-
-		// Set below, once the earliest presentation time is known.
-		samples.push({ data, timestamp: 0, keyframe, duration });
-
-		decodeTime += sampleDuration;
 	}
 
 	const earliest = Math.min(...ptss);
-	const anchor = Math.round(timestamp.asMicros());
+	const anchor = timestamp.asMicros();
 	for (const [i, sample] of samples.entries()) {
-		sample.timestamp = anchor + Math.round(((ptss[i] - earliest) * 1_000_000) / init.timescale);
+		sample.timestamp = Math.round(anchor + ((ptss[i] - earliest) * 1_000_000) / init.timescale);
 	}
 
 	return samples;

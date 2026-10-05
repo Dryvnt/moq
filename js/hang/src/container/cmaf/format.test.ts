@@ -34,22 +34,32 @@ function u32(...values: number[]): Uint8Array {
 	return out;
 }
 
-/** A moof+mdat at `tfdt` ticks whose samples are `[duration, cts]` pairs in decode order. */
-function fragment(tfdt: number, samples: [number, number][]): Uint8Array {
-	const moof = (dataOffset: number) =>
-		box(
+type Run = [duration: number, cts: number][];
+
+/** A moof+mdat at `tfdt` ticks whose runs list one-byte samples in decode order. */
+function fragment(tfdt: number, ...runs: Run[]): Uint8Array {
+	const count = runs.reduce((sum, run) => sum + run.length, 0);
+	const moof = (dataOffset: number) => {
+		let offset = dataOffset;
+		const truns = runs.map((run) => {
+			// Version 1 (signed CTS): data-offset, sample-duration, sample-size, and CTS present.
+			const trun = box("trun", u32(0x01000b01, run.length, offset), ...run.map(([d, cts]) => u32(d, 1, cts)));
+			offset += run.length;
+			return trun;
+		});
+		return box(
 			"moof",
 			box("mfhd", u32(0, 0)),
 			box(
 				"traf",
 				box("tfhd", u32(0x020000, 1)),
 				box("tfdt", u32(0x01000000, Math.floor(tfdt / 2 ** 32), tfdt % 2 ** 32)),
-				// Version 1 (signed CTS): data-offset, sample-duration, sample-size, and CTS present.
-				box("trun", u32(0x01000b01, samples.length, dataOffset), ...samples.map(([d, cts]) => u32(d, 1, cts))),
+				...truns,
 			),
 		);
+	};
 	const header = moof(0);
-	return new Uint8Array([...moof(header.byteLength + 8), ...box("mdat", new Uint8Array(samples.length))]);
+	return new Uint8Array([...moof(header.byteLength + 8), ...box("mdat", new Uint8Array(count))]);
 }
 
 // The frame timestamp is the broadcast timeline: a passthrough fragment whose `tfdt` still
@@ -78,3 +88,15 @@ test("CmafFormat anchors the earliest presentation time", () => {
 	const frames = new Format(INIT).decode(segment, Time.Timestamp.fromMillis(5_000));
 	expect(frames.map((f) => f.timestamp)).toEqual([5_033_333, 5_000_000] as Time.Micro[]);
 });
+
+// Runs continue one decode timeline, so the anchor is the earliest sample across all of them.
+test("CmafFormat anchors the earliest sample across runs", () => {
+	const segment = fragment(0, [[3000, 6000]], [[3000, 0]]);
+
+	const frames = new Format(INIT).decode(segment, at(3000));
+	expect(frames.map((f) => f.timestamp)).toEqual([66_667, 33_333] as Time.Micro[]);
+});
+
+function at(ticks: number): Time.Timestamp {
+	return new Time.Timestamp(ticks, Time.Timescale(TIMESCALE));
+}
