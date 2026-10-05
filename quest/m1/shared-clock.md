@@ -19,9 +19,9 @@ data tracks onto the anchored clock. The anchor is unreleased.
 Decided (2026-10-01):
 
 - The clock never moves once something stamps with it. The public
-  `catalog::Producer::clock()` fixes the mapping (sets `anchored`), as the
-  first catalog publish already does after
-  [final-clock](/quest/m1/final-clock.md). Crate-internal
+  `catalog::Producer::clock()` fixes the mapping (sets `anchored`).
+  [final-clock](/quest/m1/final-clock.md) then makes the first catalog
+  publish fix it too. Crate-internal
   readers, like #4668's `Listing`, read the state without fixing it.
 - An importer anchors once, on its first frame, and gets back an offset: zero
   if it placed the mapping (PTS stays verbatim), `clock.now() - first_pts`
@@ -40,16 +40,24 @@ Decided (2026-10-01):
   frame timestamp is the broadcast timeline; a payload's timestamps are only
   relative within the frame. Ad insertion (splicing sources with unrelated PTS
   bases) needs the same rule.
-- m2: nothing in-tree reaches it. `moq-cli publish` runs a capture or a stdin
-  import, never both, and moq-ffi does not expose capture.
+Decided (2026-10-05):
+
+- m1, ahead of [final-clock](/quest/m1/final-clock.md), which needs the
+  offset: once the first publish fixes the clock, a container set up after a
+  data track or catalog section (any order moq-c and moq-ffi allow) joins a
+  clock it didn't place.
+- The offset lives on the `Reserved` handle: the first anchor through any clone
+  sets it, and every clone uses it. moq-hls import's renditions are separate
+  fMP4 importers on one PTS base, so it takes one `reserve()` per source and
+  clones it for each rendition; separate offsets would shift each rendition
+  by its first frame's arrival gap. No new public items.
 
 Guidance:
 
 - The offset is signed: a stream starting at 3600 s on a clock reading 10 s
   shifts down. Refuse a frame that would land below zero rather than clamp it.
 - A `with_clock` catalog is fixed from the start, so its importers offset too.
-  Today they publish verbatim PTS on a clock they didn't place, as does an
-  importer whose first frame follows the first catalog publish.
+  Today they publish verbatim PTS on a clock they didn't place.
 - Document on `catalog::Producer::clock` that taking the clock fixes it.
 - Test: start a synthetic capture, then import an fMP4 starting at PTS 0. Both
   tracks advance from the capture's timeline with no rewind. Also cover the
@@ -63,8 +71,7 @@ Wire: none.
 
 ## Required
 
-- [Final catalog clock](/quest/m1/final-clock.md) - the first catalog publish fixes the clock, and fMP4 and MKV anchor before it
-- [CMAF frame timestamp](/quest/m2/cmaf-frame-timestamp.md) - decoders honour an offset frame timestamp on passthrough tracks
+- [CMAF frame timestamp](/quest/m1/cmaf-frame-timestamp.md) - decoders honour an offset frame timestamp on passthrough tracks
 
 ## Related
 

@@ -38,4 +38,4 @@ means.
 
 ## Related
 
-- [Shared clock](/quest/m2/shared-clock.md) - the first publisher to rely on it
+- [Shared clock](/quest/m1/shared-clock.md) - the first publisher to rely on it
