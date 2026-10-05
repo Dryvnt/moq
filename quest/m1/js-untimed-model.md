@@ -38,7 +38,8 @@ Things to look out for:
 Test: an untimed frame survives a JS subscribe on each receive path. Run
 `just test interop --all`.
 
-Public API: breaking. Wire: none.
+Public API: breaking. Wire: on drafts 14-16, timed objects gain an
+object-scope TIMESCALE beside the Timestamp; nothing else changes.
 
 ## Related
 
