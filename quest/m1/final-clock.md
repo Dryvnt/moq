@@ -5,7 +5,8 @@
 Every catalog snapshot a consumer can read carries the final root `clock`,
 and nothing re-anchors it after a snapshot is out. Today fMP4 and MKV imports
 publish the catalog when their init segment (`moov`, `Tracks`) resolves the
-reservation, on a provisional clock, then re-anchor it on the first frame
+reservation, and an Opus-only MPEG-TS import when its PMT does, on a
+provisional clock, then re-anchor it on the first frame
 (`catalog::Producer::anchor`). Readers that copy the clock once (moq-hls
 export's `EXT-X-PROGRAM-DATE-TIME` and `availabilityStartTime`, derived
 broadcasts) keep the provisional one, and the hang draft says the mapping is
@@ -23,8 +24,8 @@ proposals for the maintainer.
 
 Decided (2026-10-05):
 
-- fMP4 and MKV hold their initial reservation until their first frame
-  anchors, as FLV already does (`flv/import.rs`, "anchored before the
+- fMP4, MKV, and MPEG-TS hold their initial reservation until their first
+  frame anchors, as FLV already does (`flv/import.rs`, "anchored before the
   reservation below publishes"). The first snapshot then carries the anchored
   clock. PTS stays verbatim for a single importer, so a passthrough fragment's
   `tfdt` still agrees with its frame timestamp.
@@ -32,7 +33,8 @@ Decided (2026-10-05):
   triggered it. A snapshot on the wire is a mapping a reader may have copied.
 - An importer whose first frame arrives after a snapshot is out keeps its
   PTS verbatim (the anchor is a no-op), the same as on a `with_clock` catalog
-  today. No in-tree path reaches it: every importer takes a `Reserved`.
+  today. In-tree, only moq-hls import's later renditions reach it, and they
+  share the first rendition's PTS base.
   shared-clock replaces this with its per-importer offset.
 - Rejected: fixing the clock at catalog creation and offsetting every
   importer. Every fMP4 passthrough would carry a frame timestamp that
@@ -45,13 +47,22 @@ Decided (2026-10-05):
 Guidance:
 
 - An fMP4 `moov` declares every track at once, and MKV's `Tracks` likewise, so
-  the first frame of any track releases the hold. Several importers on one
-  catalog (moq-hls import's renditions) each hold their own reservation, so the
-  catalog still waits for all of them.
-- Tests (fail on `main` for fMP4 and MKV): for each of fMP4, MKV, FLV, and TS,
-  a catalog consumer's first snapshot carries the anchored clock and later
-  snapshots never change it. Plus an end-to-end fMP4 import into moq-hls export
-  whose `EXT-X-PROGRAM-DATE-TIME` matches the anchored clock.
+  the first frame of any track releases the hold.
+- MPEG-TS drops its hold after the PMT (`ts/import.rs`, "Every stream in the
+  initial program is registered now"). Video configs resolve only on the first
+  frame, after the anchor, but Opus builds its config from PMT descriptors, so
+  an Opus-only stream publishes before its first PES anchors. Keep the hold
+  until the first anchor.
+- moq-hls import mints each rendition's importer lazily, so the first
+  rendition can publish before later ones exist. The clock is still final:
+  renditions share one PTS base, so a later rendition's no-op anchor lands on
+  the same timeline.
+- Tests (fail on `main` for fMP4, MKV, and Opus-only TS): for each of fMP4,
+  MKV, FLV, and TS, a catalog consumer's first snapshot carries the anchored
+  clock and later snapshots never change it. The TS case is Opus-only with a
+  nonzero first PTS, since a video PMT already anchors before it publishes.
+  Plus an end-to-end fMP4 import into moq-hls export whose
+  `EXT-X-PROGRAM-DATE-TIME` matches the anchored clock.
 - Docs: fix `Config::with_clock`, `Producer::clock`, and `Producer::anchor`
   comments, `doc/lib/rs/moq-mux.md`, and add an `Unreleased` line in
   `doc/setup/upgrade.md`: the catalog now appears at an importer's first frame,
