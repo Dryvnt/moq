@@ -412,7 +412,9 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timest
 		}
 	}
 
-	const earliest = Math.min(...ptss);
+	// A loop, not `Math.min(...ptss)`: a long fragment's sample count can exceed the argument limit.
+	let earliest = Number.POSITIVE_INFINITY;
+	for (const pts of ptss) earliest = Math.min(earliest, pts);
 	const anchor = timestamp.asMicros();
 	for (const [i, sample] of samples.entries()) {
 		sample.timestamp = Math.round(anchor + ((ptss[i] - earliest) * 1_000_000) / init.timescale);
