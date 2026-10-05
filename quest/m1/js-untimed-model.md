@@ -27,6 +27,10 @@ Things to look out for:
   a track that never declared one must not claim a timeline downstream.
 - A FETCH keeps timestamps whenever the track or the object gives units.
   Only objects with neither are untimed.
+- On drafts 14-16, where SUBSCRIBE_OK can't carry TIMESCALE, the publisher
+  writes an object-scope TIMESCALE beside each Timestamp (the `stamped` path
+  in `js/net/src/ietf/publisher.ts`), as Rust does per [IETF timestamp
+  units](/quest/m1/ietf-timestamp-units.md).
 - `Frame.timestamp` and `Datagram.timestamp` become optional. Update callers
   in js/hang and js/loc (end markers) and anything in js/watch that reads
   them.

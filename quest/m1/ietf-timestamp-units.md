@@ -1,27 +1,39 @@
-# [XS] IETF drafts 14-16 send no timestamps without units
+# [XS] IETF drafts 14-16 send object-scope timestamps
 
 ## Goal
 
-On moq-transport drafts 14 through 16, where TIMESCALE can't be sent, the Rust
-and JS publishers write no Timestamp object property, as
-`drafts/draft-lcurley-moq-timestamp.md` requires ("A publisher that emits
-Timestamps MUST send TIMESCALE").
+On moq-transport drafts 14 through 16, where SUBSCRIBE_OK can't carry
+TIMESCALE, the Rust publisher writes an object-scope TIMESCALE beside each
+Timestamp. A Rust subscriber then reads those objects as timed, so
+Rust-to-Rust on those drafts keeps its timeline, and no object carries a
+Timestamp without units, as `drafts/draft-lcurley-moq-timestamp.md`
+requires.
 
 ## Plan
 
-Rust sets `has_extensions: self.timescale.is_some()`
-(`rs/moq-net/src/ietf/publisher.rs`), but `Properties::encode` never writes
-the TIMESCALE block before draft-17 (`rs/moq-net/src/ietf/properties.rs`), so
-drafts 14-16 carry timestamps without units. The Rust subscriber ignores them.
-Gate the Timestamp property on a timescale actually sent. Check js/net's
-`stamped` flag (`js/net/src/ietf/publisher.ts`) for the same gap.
+Decided 2026-10-05 11:39 +0200: send object-scope units rather than stop
+sending timestamps, which was this quest's earlier goal. #4822 already
+encodes and reads them (`ObjectTime::Object`), and peers ignore object
+properties they don't know. The cost is about two bytes per object.
 
-Before landing, check whether an interop peer on draft-14 reads the Timestamp
-property without TIMESCALE. If one does, ask whether to keep it.
+`ObjectTime::new` (`rs/moq-net/src/ietf/publisher.rs`) picks `Track` whenever
+the track has a timescale, but `Properties::encode` never writes TIMESCALE
+before draft-17 (`rs/moq-net/src/ietf/properties.rs`). On drafts 14-16, pick
+`Object` instead. Test that a timed frame stays timed over IETF 14 and 16,
+with and without a relay, in `rs/moq-net/tests/untimed.rs`.
 
-Fix the stale `track::Info::timescale` doc (`rs/moq-net/src/model/track.rs`),
-which says IETF always falls back to local milliseconds; draft-17 and later
-carry TIMESCALE.
+Decided 2026-10-05 11:39 +0200: Rust only. js/net's publisher has the same
+gap (`stamped` in `js/net/src/ietf/publisher.ts`). It goes to [JS untimed
+model](/quest/m1/js-untimed-model.md), which owns reading object-scope units
+in JS.
 
-Wire: stops sending a property peers can't interpret, on published drafts.
-Public API: none. Lands on `main`.
+Fix the stale `track::Info::timescale` doc (`rs/moq-net/src/model/track.rs`)
+if it still says IETF always falls back to local milliseconds. Fix
+`doc/concept/standard.md` if it says drafts 14-16 deliver untimed frames.
+
+Wire: drafts 14-16 objects gain an object-scope TIMESCALE property, which the
+timestamp draft already allows. Public API: none. Lands on `main`.
+
+## Required
+
+- [Untimed model](/quest/m1/untimed-model.md) - adds object-scope units and their receive path
