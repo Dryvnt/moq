@@ -37,8 +37,6 @@ Things to look out for:
   Timestamp.
 - Update callers in js/hang and js/loc (end markers) and anything in
   js/watch that reads frame timestamps.
-- An untimed CMAF frame decodes at its `tfdt` in `Cmaf.decodeDataSegment`,
-  as in Rust. Test it.
 
 Test: an untimed frame survives a JS subscribe on each receive path. Run
 `just test interop --all`.

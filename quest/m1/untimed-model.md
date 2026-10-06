@@ -89,8 +89,6 @@ Things to look out for:
 
   Media consumers that need a time refuse an untimed frame, except for the
   end-marker rule above.
-  An untimed CMAF frame is the other exception: `fmp4::decode` times it from
-  its `tfdt` instead of the frame timestamp (decided 2026-10-05). Test it.
 - A FETCH learns track units from SUBSCRIBE_OK (a joining or fill FETCH).
   A standalone FETCH that learns none when it is accepted is untimed (decided
   2026-10-05), until [FETCH_OK properties](/quest/m1/fetch-ok-properties.md)
