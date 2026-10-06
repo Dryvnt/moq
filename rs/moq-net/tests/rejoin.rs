@@ -340,7 +340,7 @@ async fn leaving_after_the_cache_window_keeps_the_latest_group() {
 		"moq-transport-19",
 		"moq-transport-22",
 	] {
-		tokio::time::timeout(TEST_TIMEOUT + moq_net::cache::DEFAULT_EXPIRY * 2, async {
+		tokio::time::timeout(TEST_TIMEOUT + moq_net::cache::DEFAULT_EXPIRY * 3, async {
 			let version: Version = version.parse().unwrap();
 			let publisher = produce_origin(1);
 			let relay = produce_origin(2);
@@ -384,17 +384,24 @@ async fn leaving_after_the_cache_window_keeps_the_latest_group() {
 			assert_eq!(read_all(&mut group).await.unwrap(), [b"c0"], "{version}");
 			tokio::time::sleep(moq_net::cache::DEFAULT_EXPIRY * 2).await;
 			drop((group, sub, leaver, leaver_session));
-			tokio::time::sleep(Duration::from_millis(100)).await;
 
-			let (later, _later) = session(5).await;
-			let mut sub = later.track("catalog").unwrap().subscribe(None).await.unwrap();
-			let group = tokio::time::timeout(Duration::from_secs(1), sub.recv_group()).await;
-			let mut group = group
-				.unwrap_or_else(|_| panic!("{version}: the later reader never got the latest group"))
-				.unwrap()
-				.unwrap();
-			assert_eq!(group.sequence, 0, "{version}");
-			assert_eq!(read_all(&mut group).await.unwrap(), [b"c0"], "{version}");
+			// Right after the leave, and again once the leaver's front has lingered and let go
+			// of the track (`IDLE_LINGER` is as long as the cache window).
+			for (hop, after) in [
+				(5, Duration::from_millis(100)),
+				(6, moq_net::cache::DEFAULT_EXPIRY + Duration::from_secs(1)),
+			] {
+				tokio::time::sleep(after).await;
+				let (later, _later) = session(hop).await;
+				let mut sub = later.track("catalog").unwrap().subscribe(None).await.unwrap();
+				let group = tokio::time::timeout(Duration::from_secs(1), sub.recv_group()).await;
+				let mut group = group
+					.unwrap_or_else(|_| panic!("{version}: reader {hop} never got the latest group"))
+					.unwrap()
+					.unwrap();
+				assert_eq!(group.sequence, 0, "{version}");
+				assert_eq!(read_all(&mut group).await.unwrap(), [b"c0"], "{version}");
+			}
 		})
 		.await
 		.unwrap_or_else(|_| panic!("{version}: timed out"));
