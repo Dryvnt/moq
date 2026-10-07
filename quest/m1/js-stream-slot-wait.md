@@ -62,10 +62,14 @@ Decided (2026-10-07, with OneTooMany):
   cancellable wait for its slot and no new answer deadline:
   - subscribe (lite TRACK and SUBSCRIBE opens, IETF draft 17): its existing
     answer deadline starts once the stream is open; the wait ends when demand
-    leaves or the session closes;
-  - track info and fetch (lite `#exchange`): no answer deadline today and none
-    added; the wait ends with whatever ends the request today (the fetched
-    group closing, the subscriber closing);
+    leaves or the session closes. On lite-05+ the answer is the TRACK_INFO
+    that subscribe reads through `#trackInfo` (SUBSCRIBE itself gets no
+    response), so that TRACK_INFO stays under the deadline, started once the
+    TRACK stream opens; the SUBSCRIBE open after it only waits. On older lite
+    drafts the answer is SUBSCRIBE_OK;
+  - standalone track info and fetch (lite `#exchange`, outside subscribe): no
+    answer deadline today and none added; the wait ends with whatever ends
+    the request today (the fetched group closing, the subscriber closing);
   - announce interest (lite) and SubscribeNamespace (IETF v16): long-lived,
     so no answer deadline ever; the wait ends when the interest is dropped.
 - Chrome's immediate rejection stays terminal. Fix the text it makes stale:
@@ -88,7 +92,10 @@ Things to look out for:
 - `Stream.open` needs a mode that waits until cancelled rather than until a
   deadline; `Writer.tryOpen` already has a cancel.
 - On lite-05+ a subscribe opens the TRACK stream and then the SUBSCRIBE
-  stream; both opens wait, and only the answer is under the deadline.
+  stream; both opens wait, and only TRACK_INFO is under the deadline. Keep
+  [#5002](https://github.com/moq-dev/moq/pull/5002)'s handling of a deadline
+  that fires mid-setup: the TRACK stream is reset, and a SUBSCRIBE stream
+  that opens afterwards is reset with nothing written.
 - On IETF drafts 14-16 requests ride the control stream and need no stream
   credit; only real opens (draft 17, v16 SubscribeNamespace) are affected.
 - Demand churn can still add waiting creates: each time demand leaves while
@@ -104,7 +111,9 @@ waiting past `OPEN_TIMEOUT_MS` with no response deadline involved, and logs
 one warning; a watch-like retry loop
 over several deadlines leaves at most one waiting create; a freed slot lets
 the waiting create carry the SUBSCRIBE and the track delivers; a stream that
-opened but got no answer still fails with `ControlTimeout`; demand leaving
+opened but got no answer still fails with `ControlTimeout`, including a
+lite-05+ subscribe whose TRACK stream opens but whose TRACK_INFO never
+comes, while one whose TRACK open waits for credit doesn't; demand leaving
 during the wait resets the late stream; repeated leave and return cycles
 while slots stay held leave one queued create per cycle, no more. Cover
 lite and IETF draft 17, and a fetch and an announce interest whose opens wait.
