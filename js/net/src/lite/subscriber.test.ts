@@ -786,6 +786,8 @@ interface FakeStream {
 	// Resolves once the subscriber waits on a read the test has not answered.
 	reading: Promise<void>;
 	aborted: Promise<unknown>;
+	// Every chunk the subscriber wrote.
+	written: Uint8Array[];
 	// Hands the stream to the subscriber, for an open the session was told to park.
 	release: () => void;
 }
@@ -812,10 +814,14 @@ function fakeSession(park: number[] = []) {
 				},
 				{ highWaterMark: 0 },
 			);
-			const writable = new WritableStream<Uint8Array>({ abort: (reason) => void onAbort(reason) });
+			const written: Uint8Array[] = [];
+			const writable = new WritableStream<Uint8Array>({
+				write: (chunk) => void written.push(chunk),
+				abort: (reason) => void onAbort(reason),
+			});
 			const opened = new Promise((resolve) => (release = () => resolve({ readable, writable })));
 			if (!park.includes(streams.length)) release();
-			streams.push({ inbound, reading, aborted, release });
+			streams.push({ inbound, reading, aborted, written, release });
 			return opened;
 		},
 	} as unknown as WebTransport;
@@ -922,6 +928,40 @@ test.each([
 		});
 		await subscriber.runGroup(new Group({ subscribe: 0n, sequence: 0 }), reader);
 		expect(touched).toEqual([]);
+	} finally {
+		subscriber.close();
+		warn.mockRestore();
+		jest.useRealTimers();
+	}
+});
+
+// The SUBSCRIBE stream can open after the deadline too; it is reset without carrying a SUBSCRIBE.
+test("a lite subscribe that times out waiting on a stream slot for the SUBSCRIBE sends nothing on it", async () => {
+	jest.useFakeTimers();
+	const warn = spyOn(console, "warn").mockImplementation(() => {});
+	const { quic, streams } = fakeSession([1]);
+	const subscriber = new Subscriber(quic, Version.DRAFT_05, HopSchema.parse(1n));
+	try {
+		const track = subscriber.consume(Path.from("room")).track("video").subscribe();
+		await drainUntil(() => streams.length === 1);
+		await streams[0].reading;
+		// TRACK_INFO lands halfway, so the SUBSCRIBE open's own deadline is still ahead when the
+		// setup deadline fires.
+		jest.advanceTimersByTime(SUBSCRIBE_SETUP_TIMEOUT_MS / 2);
+		await answerTrackInfo(streams[0]);
+		await drainUntil(() => streams.length === 2);
+
+		jest.advanceTimersByTime(SUBSCRIBE_SETUP_TIMEOUT_MS / 2);
+		await drainUntil(() => track.closed.peek() !== undefined);
+
+		let aborted = false;
+		void streams[1].aborted.then(() => {
+			aborted = true;
+		});
+		streams[1].release();
+		await drainUntil(() => aborted);
+		expect(aborted).toBe(true);
+		expect(streams[1].written).toEqual([]);
 	} finally {
 		subscriber.close();
 		warn.mockRestore();

@@ -685,6 +685,9 @@ export class Subscriber {
 		this.#subscribes.set(id, entry);
 
 		state.stream = await Stream.open(this.#quic, { version: this.version });
+		// The deadline passed while the open waited: the late-setup handler resets the stream, so
+		// don't send a SUBSCRIBE on it first.
+		state.cancel.signal.throwIfAborted();
 		await state.stream.writer.u53(StreamId.Subscribe);
 		await msg.encode(state.stream.writer, this.version);
 
