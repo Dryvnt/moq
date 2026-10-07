@@ -649,17 +649,20 @@ impl TrackState {
 	}
 
 	/// Where a new reader with no explicit start begins on an untimed track: its newest
-	/// servable group.
+	/// servable group below the exclusive `cap`.
 	///
 	/// A drift budget resolves a timed track's start, but nothing is ever stale on an
 	/// untimed track, so the budget would replay the whole cache. `None` on a timed track,
 	/// or while nothing is servable yet.
-	fn untimed_start(&self) -> Option<u64> {
+	fn untimed_start(&self, cap: Option<u64>) -> Option<u64> {
 		if self.info.as_ref()?.timescale.is_some() {
 			return None;
 		}
 		self.lookup
-			.iter()
+			.range((
+				std::ops::Bound::Unbounded,
+				cap.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
+			))
 			.rev()
 			.find(|(_, slot)| slot.visible && !slot.group.is_aborted())
 			.map(|(sequence, _)| *sequence)
@@ -3469,7 +3472,10 @@ impl Cursor {
 			let preferences = subscription.read();
 			match preferences.start {
 				Some(_) => floor_of(&preferences),
-				None => state.read().untimed_start().unwrap_or(0),
+				None => {
+					let cap = preferences.end.and_then(|end| Cap::from(end.group_end()).exclusive());
+					state.read().untimed_start(cap).unwrap_or(0)
+				}
 			}
 		};
 		Self {
@@ -6440,6 +6446,20 @@ mod test {
 
 		let mut subscriber = producer.subscribe(Subscription::default().with_start(Position::group(2)));
 		assert_eq!(drain(&mut subscriber), vec![2, 3, 4]);
+	}
+
+	/// An unfloored untimed subscription with an end starts at the latest group below it,
+	/// as the lite publisher serves a SUBSCRIBE with an end and no start.
+	#[test]
+	fn an_untimed_start_stays_under_the_end() {
+		let mut producer = untimed_producer();
+		for _ in 0..5 {
+			append_untimed(&mut producer);
+		}
+
+		let mut subscriber = producer.subscribe(Subscription::default().with_end(Position::group(3)));
+		subscriber.end_at(Position::group(3).group_end());
+		assert_eq!(drain(&mut subscriber), vec![2]);
 	}
 
 	/// A refused single-frame write leaves no group behind: an empty open group would hold a
