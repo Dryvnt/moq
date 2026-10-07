@@ -34,7 +34,10 @@ Decided:
   2026-10-06). Each first-party publisher mints one per run and announces it;
   a replica announces a shared one. A route without one, such as a
   transcoder's prefix claim, stays on the worker that first served a
-  subscription and is never stitched to another worker's output.
+  subscription and is never stitched to another worker's output. On lite-07
+  a claim's answer will carry the served broadcast's own epoch
+  ([Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md), planned
+  2026-10-07), which adds it to TRACK_INFO.
 - The newest epoch wins a prefix ahead of cost (decided 2026-10-06), and
   replaces the old one with a hard switch: subscriptions in flight end with
   `Unroutable`. When it goes and an older one is still live, the older one
@@ -74,4 +77,5 @@ timeout, and killing the newest epoch falls back to a still-live older one.
 - [Bindings](/quest/m0/broadcast-epoch/bindings.md) - moq-ffi and every wrapper expose the epoch and let a publisher announce one
 - [Remove `--hop`](/quest/m0/broadcast-epoch/hop-removal.md) - `moq` takes an optional `--epoch` instead of `--hop`, a plain publisher declares a random Hop ID, and the per-session hop stamp is gone
 - [Stats epochs](/quest/m0/broadcast-epoch/stats-epoch.md) - moq-stats publishes each group announcement under its own epoch, so neither a restarted node nor a returning idle group stalls its viewers
+- [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) - a claim's answer names the instance that served it, so an unread path re-resolves at once, a restarted output is never spliced, and a per-output epoch costs no cut
 - [Stats totals and prefix tracks](/quest/m0/broadcast-epoch/stats-split.md) - the same release retires the per-path stats maps for totals and on-demand prefix tracks (decided 2026-10-05)

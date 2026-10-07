@@ -64,7 +64,9 @@ Decisions (2026-10-07):
   reconnects with a fresh hop.
 - A claim worker that re-serves a path after closing it is a new instance.
   Document that in `doc/concept/moq-lite.md` Resume: such a worker keeps its
-  group sequence going or announces the exact path with a fresh epoch, and
+  group sequence going, across its own source restarting too (mirroring an
+  upstream sequence that goes back to 0 isn't enough), or gives each output its own epoch once
+  [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) lands, and
   "a transcoder claim stays on the worker that first served it" holds only
   while something reads it. Without that, a viewer returning within the
   linger gets the old instance's cached latest group and then nothing until
@@ -83,6 +85,8 @@ Public API: none expected. Wire: none.
 
 ## Related
 
+- [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) - on lite-07, an unread front re-resolves at once instead of after the linger, and a restarted output is never spliced
+- [Upstream position regression](/quest/m0/largest-regression.md) - fails loud on the stale splice where the answer shows it
 - [Prefix route fronts](/quest/m0/prefix-route-fronts.md) - bounds how many fronts a prefix route can mint at once; this reclaims idle ones
 - [Front parking](/quest/m1/origin-front-parks.md) - a front waiting for coverage must survive this; the filtered-front leak moved here from it
 - [Route wakes](/quest/m1/route-wakes.md) - indexes fronts per route, so an ended front must drop its entries
