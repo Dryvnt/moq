@@ -1629,6 +1629,9 @@ impl Producer {
 		if frame.len() as u64 > group::MAX_CACHE_BYTES {
 			return Err(Error::FrameTooLarge);
 		}
+		// Checked before the group exists, so a refused frame leaves no empty group behind.
+		let timescale = self.modify()?.info.as_ref().unwrap().timescale;
+		let timestamp = group::on_track(timestamp.into(), timescale)?;
 		let mut group = self.append_group()?;
 		group.write_frame(timestamp, frame)?;
 		group.finish()?;
@@ -6371,6 +6374,18 @@ mod test {
 
 		let mut subscriber = producer.subscribe(Subscription::default().with_start(Position::group(2)));
 		assert_eq!(drain(&mut subscriber), vec![2, 3, 4]);
+	}
+
+	/// A refused single-frame write leaves no group behind: an empty open group would hold a
+	/// subscriber waiting for a frame that never comes.
+	#[test]
+	fn a_mismatched_frame_appends_no_group() {
+		let mut producer = track_producer("test", None);
+		assert!(matches!(
+			producer.write_frame(None, bytes::Bytes::from_static(b"x")),
+			Err(Error::TimestampMismatch)
+		));
+		assert_eq!(producer.append_group().unwrap().sequence, 0);
 	}
 
 	/// A track is all timed or all untimed, so a datagram that doesn't match it is refused.

@@ -3154,6 +3154,10 @@ where
 				if let Ok(mut state) = fill.write() {
 					*state = Fill::Done;
 				}
+				// As for a subgroup object: the track is malformed, not just this fill.
+				if matches!(err, Error::MalformedTrack) {
+					let _ = track.abort(Error::MalformedTrack);
+				}
 				return Err(err);
 			}
 		};
@@ -7401,6 +7405,40 @@ mod stitch_tests {
 				.unwrap();
 		}
 		stream
+	}
+
+	/// A fill object without a Timestamp on a timed track ends the track, as a subgroup
+	/// object does: the fill is the head of a group the subscription carries.
+	#[moq_net_sim::test]
+	async fn an_unstamped_fill_object_ends_the_track() {
+		use futures::FutureExt;
+
+		let mut script = Vec::new();
+		crate::coding::Encoder::new(&mut script, VERSION.into())
+			.varint(ietf::FetchHeader::TYPE)
+			.unwrap();
+		ietf::FetchHeader { request_id: REQUEST }
+			.encode(&mut crate::coding::Encoder::new(&mut script, VERSION.into()), VERSION)
+			.unwrap();
+		ietf::FetchObject::Object {
+			subgroup: ietf::FetchSubgroup::Zero,
+			group: Some(SEQUENCE),
+			object: Some(0),
+			priority: Some(0),
+			properties: None,
+		}
+		.encode(&mut crate::coding::Encoder::new(&mut script, VERSION.into()), VERSION)
+		.unwrap();
+		crate::coding::Encoder::new(&mut script, VERSION.into())
+			.varint(1u64)
+			.unwrap();
+		script.push(42);
+
+		let h = Harness::new(Fill::Serving(Some(Timescale::MICRO)), vec![script]);
+		let mut stream = h.stream().await;
+		let res = h.subscriber.clone().recv_fill(&mut stream).await;
+		assert!(matches!(res, Err(Error::MalformedTrack)), "{res:?}");
+		assert!(matches!(h.track.closed().now_or_never(), Some(Error::MalformedTrack)));
 	}
 
 	/// A subgroup object without a Timestamp on a timed track makes the whole track

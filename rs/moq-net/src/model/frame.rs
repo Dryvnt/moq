@@ -30,7 +30,9 @@ pub struct Info {
 	///
 	/// [`group::Producer::create_frame`] converts it into the parent track's
 	/// timescale, so the scale you build it with doesn't have to match the track.
-	/// An untimed frame reaches every subscriber untimed: no hop fills one in.
+	/// No receiver fills one in, so an untimed track stays untimed across hops, except
+	/// over moq-lite 05 and later, which can't mark a track untimed yet and carries the
+	/// encoder's send time instead.
 	pub timestamp: Option<Timestamp>,
 }
 
