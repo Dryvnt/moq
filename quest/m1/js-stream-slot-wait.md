@@ -47,9 +47,9 @@ Decided (2026-10-07, with OneTooMany):
   own timeout producing `ControlTimeout` at 10 s), while the probe, SETUP and
   publisher group streams keep it. Rejected: keeping an open deadline with a
   distinct "no stream slot" error (still one waiting create per attempt, and
-  callers must decide whether to retry it), and a per-session opener that caps waiting creates,
-  hands a late stream to the next waiter and orders by priority (bounds
-  everything, but [L] and beyond this goal).
+  callers must decide whether to retry it), and a per-session opener that
+  caps waiting creates, hands a late stream to the next waiter and orders by
+  priority (bounds everything, but [L] and beyond this goal).
 - A request that has waited for a slot past about 10 s logs a `console.warn`
   once and keeps waiting, so a peer that never grants credit (a limit of zero,
   or slots held forever) shows up for whoever debugs it instead of stalling
