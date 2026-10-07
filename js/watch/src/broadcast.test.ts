@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as Catalog from "@moq/hang/catalog";
 import * as Container from "@moq/hang/container";
+import * as Json from "@moq/json";
 import * as Moq from "@moq/net";
 import { Origin, Path, Time } from "@moq/net";
 import { Effect, Signal } from "@moq/signals";
@@ -281,6 +282,38 @@ describe("republish", () => {
 			expect(frames).toEqual([42]);
 		} finally {
 			effect.close();
+			source.close();
+			owner.close();
+		}
+	});
+});
+
+describe("catalog", () => {
+	it("subscribes again after the catalog's setup times out", async () => {
+		const owner = new Origin.Producer();
+		const path = Path.from("room/cam.hang");
+		const producer = publish(owner, path);
+		const failing = producer.createTrack(Catalog.TRACK);
+		const source = new Broadcast({ origin: owner, name: path, enabled: true, catalogFormat: "hang" });
+		try {
+			await settle();
+			expect(source.out.status.peek()).toBe("loading");
+
+			// What the subscriber rejects a track with once its own setup deadline passes.
+			const timeout = Object.assign(new Error("subscribe timed out after 10000ms"), { name: "TimeoutError" });
+			failing.close(new Moq.Error.Stream(Moq.StreamCode.ControlTimeout, { cause: timeout }));
+			const serving = producer.createTrack(Catalog.TRACK);
+			const catalog = new Json.Snapshot.Producer<Catalog.Root>({
+				track: serving,
+				compression: "none",
+				deltaRatio: 0,
+			});
+			catalog.update({ video: { renditions: { hd: video("avc1.42001f") } } } as Catalog.Root);
+			await settle();
+
+			expect(source.out.status.peek()).toBe("live");
+			expect(videoRenditions(source)).toEqual(["hd"]);
+		} finally {
 			source.close();
 			owner.close();
 		}

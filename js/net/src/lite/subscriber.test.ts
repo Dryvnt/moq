@@ -7,6 +7,7 @@ import { HopSchema, isAnonymous, MAX_HOPS, Route, UNKNOWN_HOP } from "../hop.ts"
 import * as Path from "../path.ts";
 import { type Reader, Writer } from "../stream.ts";
 import * as Time from "../time.ts";
+import { TimeoutError } from "../util/timeout.ts";
 import { type AnnounceBroadcast, AnnounceInit, AnnounceOk, encodeAnnounceBroadcast } from "./announce.ts";
 import { Group } from "./group.ts";
 import { Probe } from "./probe.ts";
@@ -962,6 +963,31 @@ test("a lite subscribe that times out waiting on a stream slot for the SUBSCRIBE
 		await drainUntil(() => aborted);
 		expect(aborted).toBe(true);
 		expect(streams[1].written).toEqual([]);
+	} finally {
+		subscriber.close();
+		warn.mockRestore();
+		jest.useRealTimers();
+	}
+});
+
+// @moq/watch subscribes again after this deadline but never after a peer's reset with the same code,
+// so the local timeout has to keep the timer's TimeoutError as its cause.
+test("a subscribe whose TRACK_INFO never arrives closes with a control timeout caused by the timer", async () => {
+	jest.useFakeTimers();
+	const warn = spyOn(console, "warn").mockImplementation(() => {});
+	const { quic, streams } = fakeSession();
+	const subscriber = new Subscriber(quic, Version.DRAFT_05, HopSchema.parse(1n));
+	try {
+		const track = subscriber.consume(Path.from("room")).track("video").subscribe();
+		await drainUntil(() => streams.length === 1);
+		await streams[0].reading;
+
+		jest.advanceTimersByTime(SUBSCRIBE_SETUP_TIMEOUT_MS);
+		await drainUntil(() => track.closed.peek() !== undefined);
+		const closed = track.closed.peek();
+		expect(closed).toBeInstanceOf(StreamError);
+		expect((closed as StreamError).code).toBe(StreamCode.ControlTimeout);
+		expect((closed as StreamError).cause).toBeInstanceOf(TimeoutError);
 	} finally {
 		subscriber.close();
 		warn.mockRestore();

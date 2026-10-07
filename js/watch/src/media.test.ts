@@ -88,16 +88,23 @@ test("media does not subscribe through a closed broadcast handle", () => {
 	}
 });
 
-// A subscription that timed out before its first response is opened again; any other reset ends it.
+// What the subscriber rejects a track with once its own setup deadline passes: the code, wrapping the
+// TimeoutError its timer raised. A peer's reset with the same code wraps the transport error instead.
+const timedOut = () =>
+	new Moq.Error.Stream(Moq.StreamCode.ControlTimeout, {
+		cause: Object.assign(new Error("subscribe timed out after 10000ms"), { name: "TimeoutError" }),
+	});
+
+// A subscription that timed out here before its first response is opened again; any other reset ends it.
 // Driven the way the decoders drive it: one effect that subscribes and reads until `nextMedia` runs out.
-// ControlTimeout is what the subscriber rejects a track with once SUBSCRIBE goes unanswered for 10 s.
-for (const [code, resumes] of [
-	["ControlTimeout", true],
-	["Unroutable", false],
-	["Cancel", false],
-	["NotFound", false],
+for (const [label, failure, resumes] of [
+	["a local setup timeout", timedOut(), true],
+	["a peer's ControlTimeout reset", new Moq.Error.Stream(Moq.StreamCode.ControlTimeout), false],
+	["Unroutable", new Moq.Error.Stream(Moq.StreamCode.Unroutable), false],
+	["Cancel", new Moq.Error.Stream(Moq.StreamCode.Cancel), false],
+	["NotFound", new Moq.Error.Stream(Moq.StreamCode.NotFound), false],
 ] as const) {
-	test(`media ${resumes ? "re-subscribes" : "stays ended"} after ${code}`, async () => {
+	test(`media ${resumes ? "re-subscribes" : "stays ended"} after ${label}`, async () => {
 		const broadcast = new Moq.Broadcast.Producer();
 		const handle = broadcast.consume();
 		const format = new Container.Legacy.Format("data");
@@ -126,7 +133,7 @@ for (const [code, resumes] of [
 
 			// Let the effect subscribe before the subscription fails.
 			await microtasks();
-			failing.close(new Moq.Error.Stream(Moq.StreamCode[code]));
+			failing.close(failure);
 
 			// The publisher is fine and serves the next subscription.
 			const serving = broadcast.createTrack("video");
