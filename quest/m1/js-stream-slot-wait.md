@@ -66,9 +66,11 @@ Things to look out for:
   stream; both opens wait, and only the answer is under the deadline.
 - On IETF drafts 14-16 requests ride the control stream and need no stream
   credit; only real opens (draft 17, v16 SubscribeNamespace) are affected.
-- Demand churn can still add waiting creates (a viewer leaves, the late
-  stream is reset, a new viewer opens again). That is bounded by viewers, not
-  time.
+- Demand churn can still add waiting creates: each time demand leaves while
+  an open waits and then returns, the old create stays queued and a new one
+  is made. That is bounded by how often demand comes and goes while slots are
+  held, not by time or by viewers. Bounding it too is the per-session
+  opener's job, rejected above as beyond this goal.
 
 Tests (mocked time): give the mock transport an optional stream limit with
 FIFO creates and slots returned when a stream closes. With the limit held, a
@@ -76,7 +78,9 @@ subscribe whose open waits doesn't fail after 10 s; a watch-like retry loop
 over several deadlines leaves at most one waiting create; a freed slot lets
 the waiting create carry the SUBSCRIBE and the track delivers; a stream that
 opened but got no answer still fails with `ControlTimeout`; demand leaving
-during the wait resets the late stream. Cover lite and IETF draft 17.
+during the wait resets the late stream; repeated leave and return cycles
+while slots stay held leave one queued create per cycle, no more. Cover
+lite and IETF draft 17.
 
 Public API: none. Behaviour: `ControlTimeout` no longer covers waiting for a
 stream slot. Wire: none.

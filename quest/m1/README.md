@@ -130,7 +130,6 @@ blocks. The quests that gated m0 lines moved under them.
 - [JS track handover](/quest/m1/js-group-handover.md) - a JS track subscription resumes across a route swap from the first frame it lacks, so `test/drain` passes at zero latency budget
 - [JS startup hole](/quest/m1/js-startup-hole.md) - a `@moq/hang` consumer delivers its first live group at once, even when an empty group died before it
 - [JS GOAWAY requests](/quest/m1/js-goaway-requests.md) - after GOAWAY the JS client opens no new request on the old session, like Rust
-- [JS stream slot wait](/quest/m1/js-stream-slot-wait.md) - a JS request waiting for a stream slot never times out as ControlTimeout and leaves at most one waiting open, so @moq/watch's re-subscribe can't pile them up
 - [Drain handshakes](/quest/m1/drain-handshakes.md) - a drain GOAWAYs and waits for sessions still in their handshake instead of exiting under them
 - [Transport upgrade](/quest/m1/transport-upgrade/README.md) - a session that came up over WebSocket moves to QUIC once the QUIC dial lands, handing over without dropping a group
 - [Scope track priority](/quest/m1/track-priority-scope.md) - priority orders one owner's streams, and a shared cluster session is fair across tenants
@@ -161,6 +160,7 @@ blocks. The quests that gated m0 lines moved under them.
 - [Copy-walk bench](/quest/m1/admission-bench.md) - a front's walk over its copies on a route change is benchmarked over tracks and copies
 - [Publish channel count](/quest/m1/publish-audio-channel-count.md) - forcing a channel count on an Audio.Capture stops costing the subscriber gaps of silence
 - [JS abandonment](/quest/m1/js-subscribe-abandonment.md) - a viewer returning during IETF subscribe setup keeps its track across microtasks
+- [JS stream slot wait](/quest/m1/js-stream-slot-wait.md) - a JS request waiting for a stream slot never times out as ControlTimeout and leaves at most one waiting open, so @moq/watch's re-subscribe can't pile them up
 - [E2EE](/quest/m1/e2ee/README.md) - TypeScript and Rust peers interoperate over encrypted broadcasts no relay can decrypt
 - [#3056](/quest/m1/3056-watch-video-decoder-captures-the-rewind-generation-at.md) - watch: the video decoder resets on a declared discontinuity
 - [#933](/quest/m1/933-video-rotation-metadata-not-propagated-from-mobile-camera.md) - the catalog rotation follows the live camera's orientation
