@@ -16,10 +16,13 @@ Out of scope: publisher group streams, and Chrome's immediate rejection
 
 ## Plan
 
-Opens use `waitUntilAvailable: true`, and the subscribe setup deadline is
-started before the open, so a request waiting on stream credit times out as a
-`ControlTimeout`. Neither WebTransport nor `@moq/qmux` can cancel a waiting
-create; `@moq/net` resets the stream when it finally opens. Each retry after
+Opens use `waitUntilAvailable: true`, and two deadlines run before a request
+has a stream: each open's own `OPEN_TIMEOUT_MS` (`openWithin` in
+`js/net/src/stream.ts`), and the subscribe setup deadline around the open.
+Either rejects with a `TimeoutError`, which both subscribers map to
+`ControlTimeout`, so a request waiting on stream credit times out as one.
+Neither WebTransport nor `@moq/qmux` can cancel a waiting create; `@moq/net`
+resets the stream when it finally opens. Each retry after
 such a timeout therefore adds another waiting create, served oldest first.
 
 Engine behaviour (2026-10-07):
@@ -39,17 +42,39 @@ Decided (2026-10-07, with OneTooMany):
   reset. The response deadline starts once the stream is open. Rust already
   works this way (no setup deadline, a dropped open is cancelled cleanly), and
   the IETF publisher's announce advertisement already opens outside its
-  timeout. Rejected: keeping an open deadline with a distinct "no stream
-  slot" error (still one waiting create per attempt, and callers must decide
-  whether to retry it), and a per-session opener that caps waiting creates,
+  timeout. Both deadlines move off the wait: the per-request opens drop
+  `OPEN_TIMEOUT_MS` (moving only the setup deadline would leave the open's
+  own timeout producing `ControlTimeout` at 10 s), while the probe, SETUP and
+  publisher group streams keep it. Rejected: keeping an open deadline with a
+  distinct "no stream slot" error (still one waiting create per attempt, and
+  callers must decide whether to retry it), and a per-session opener that caps waiting creates,
   hands a late stream to the next waiter and orders by priority (bounds
   everything, but [L] and beyond this goal).
+- A request that has waited for a slot past about 10 s logs a `console.warn`
+  once and keeps waiting, so a peer that never grants credit (a limit of zero,
+  or slots held forever) shows up for whoever debugs it instead of stalling
+  silently. It recovers as soon as a slot frees. Rejected: a long cap with a
+  distinct error that `@moq/watch` doesn't retry (the track dies, as on Chrome
+  today), and a silent stall that is only documented.
 - `ControlTimeout` narrows to "opened, unanswered", which is what the lite
   draft's 0x31 text already says. No draft change.
-- Scope is every per-request setup, not only subscribe.
-- Chrome's immediate rejection stays terminal. Fix the stale "Chrome silently
-  blocks" and "Chrome ~100" comments in both subscribers; the stream cap is
-  the peer's MAX_STREAMS (the Rust relay grants 10,000 by default).
+- Scope is every per-request setup, not only subscribe. Each path gains a
+  cancellable wait for its slot and no new answer deadline:
+  - subscribe (lite TRACK and SUBSCRIBE opens, IETF draft 17): its existing
+    answer deadline starts once the stream is open; the wait ends when demand
+    leaves or the session closes;
+  - track info and fetch (lite `#exchange`): no answer deadline today and none
+    added; the wait ends with whatever ends the request today (the fetched
+    group closing, the subscriber closing);
+  - announce interest (lite) and SubscribeNamespace (IETF v16): long-lived,
+    so no answer deadline ever; the wait ends when the interest is dropped.
+- Chrome's immediate rejection stays terminal. Fix the text it makes stale:
+  the "Chrome silently blocks" and "Chrome ~100" comments in both subscribers
+  (the stream cap is the peer's MAX_STREAMS; the Rust relay grants 10,000 by
+  default), `stream.ts`'s claim that a non-waiting open rejects with
+  `QuotaExceededError` and its "matches the subscribe budget" note, and the
+  "(browser stream limit reached?)" hint in both subscribe timeout messages,
+  which no longer names a plausible cause.
 - No cancel in `@moq/qmux`: with at most one waiting create per live request
   it adds little.
 - Documentation stays inline: comments and any doc describing the setup
@@ -74,16 +99,19 @@ Things to look out for:
 
 Tests (mocked time): give the mock transport an optional stream limit with
 FIFO creates and slots returned when a stream closes. With the limit held, a
-subscribe whose open waits doesn't fail after 10 s; a watch-like retry loop
+subscribe whose open waits doesn't fail after 10 s, including an open
+waiting past `OPEN_TIMEOUT_MS` with no response deadline involved, and logs
+one warning; a watch-like retry loop
 over several deadlines leaves at most one waiting create; a freed slot lets
 the waiting create carry the SUBSCRIBE and the track delivers; a stream that
 opened but got no answer still fails with `ControlTimeout`; demand leaving
 during the wait resets the late stream; repeated leave and return cycles
 while slots stay held leave one queued create per cycle, no more. Cover
-lite and IETF draft 17.
+lite and IETF draft 17, and a fetch and an announce interest whose opens wait.
 
-Public API: none. Behaviour: `ControlTimeout` no longer covers waiting for a
-stream slot. Wire: none.
+Public API: none; the open deadline and the new wait mode are internal to
+`@moq/net`. Behaviour: `ControlTimeout` no longer covers waiting for a stream
+slot, and a per-request open no longer fails after 10 s. Wire: none.
 
 ## Related
 
