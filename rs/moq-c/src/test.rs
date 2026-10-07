@@ -1404,7 +1404,7 @@ fn publish_track_invalid_broadcast() {
 
 	let subscription = moq_subscription {
 		priority: 1,
-		max_age_us: 0,
+		max_delay_us: 0,
 		group_start: 0,
 		group_start_present: false,
 		group_end: 0,
@@ -1511,7 +1511,7 @@ fn raw_track_publish_consume() {
 	// finish draining if the second becomes visible while the callback runs.
 	let subscription = moq_subscription {
 		priority: 0,
-		max_age_us: 1_000_000,
+		max_delay_us: 1_000_000,
 		group_start: 0,
 		group_start_present: false,
 		group_end: 0,
@@ -1717,7 +1717,7 @@ fn raw_track_subscription_options_and_update() {
 	let frame_cb = Callback::new();
 	let subscription = moq_subscription {
 		priority: 5,
-		max_age_us: 25_000,
+		max_delay_us: 25_000,
 		group_start: 1,
 		group_start_present: true,
 		group_end: 2,
@@ -3376,7 +3376,7 @@ fn video_raw_publish_consume() {
 	let catalog_id = id(catalog_cb.recv());
 
 	let decoder = moq_video_decoder_output {
-		max_age_us: 10_000_000,
+		max_delay_us: 10_000_000,
 		format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_I420 as u32,
 		width: 0,
 		height: 0,
@@ -3448,7 +3448,7 @@ fn video_raw_decode_output_rejected() {
 	use crate::ffi::ReturnCode;
 
 	let bad_format = moq_video_decoder_output {
-		max_age_us: 0,
+		max_delay_us: 0,
 		format: 999,
 		width: 0,
 		height: 0,
@@ -3460,7 +3460,7 @@ fn video_raw_decode_output_rejected() {
 
 	for (width, height) in [(320, 0), (0, 240), (321, 240), (320, 241), (u32::MAX - 1, u32::MAX - 1)] {
 		let bad_size = moq_video_decoder_output {
-			max_age_us: 0,
+			max_delay_us: 0,
 			format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_I420 as u32,
 			width,
 			height,
@@ -3478,7 +3478,7 @@ fn video_raw_decode_output_rejected() {
 	);
 
 	let valid = moq_video_decoder_output {
-		max_age_us: 0,
+		max_delay_us: 0,
 		format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_RGBA as u32,
 		width: 160,
 		height: 120,
@@ -3581,7 +3581,7 @@ fn decode_first_frame(output: &moq_video_decoder_output) -> (u32, u32, usize) {
 #[test]
 fn video_raw_decode_rgba() {
 	let output = moq_video_decoder_output {
-		max_age_us: 10_000_000,
+		max_delay_us: 10_000_000,
 		format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_RGBA as u32,
 		width: 0,
 		height: 0,
@@ -3594,7 +3594,7 @@ fn video_raw_decode_rgba() {
 #[test]
 fn video_raw_decode_resize() {
 	let output = moq_video_decoder_output {
-		max_age_us: 10_000_000,
+		max_delay_us: 10_000_000,
 		format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_I420 as u32,
 		width: 160,
 		height: 120,
@@ -3922,7 +3922,7 @@ fn video_raw_decode() {
 
 	// Subscribe + decode before publishing frames so the keyframe group is delivered.
 	let output = moq_video_decoder_output {
-		max_age_us: 10_000_000,
+		max_delay_us: 10_000_000,
 		format: moq_video_pixel_format::MOQ_VIDEO_PIXEL_FORMAT_I420 as u32,
 		width: 0,
 		height: 0,
@@ -4920,7 +4920,7 @@ fn read_raw_frames(consume: u32, name: &[u8], count: usize) -> Vec<Vec<u8>> {
 	let frame_cb = Callback::new();
 	let subscription = moq_subscription {
 		priority: 0,
-		max_age_us: 1_000_000,
+		max_delay_us: 1_000_000,
 		group_start: 0,
 		group_start_present: false,
 		group_end: 0,
