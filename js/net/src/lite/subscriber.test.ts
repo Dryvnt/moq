@@ -10,7 +10,7 @@ import * as Time from "../time.ts";
 import { type AnnounceBroadcast, AnnounceInit, AnnounceOk, encodeAnnounceBroadcast } from "./announce.ts";
 import { Group } from "./group.ts";
 import { Probe } from "./probe.ts";
-import { Subscriber } from "./subscriber.ts";
+import { SUBSCRIBE_SETUP_TIMEOUT_MS, Subscriber } from "./subscriber.ts";
 import { TrackInfo } from "./track.ts";
 import { Version } from "./version.ts";
 
@@ -883,33 +883,45 @@ test.each([
 	await stuck.aborted;
 });
 
-// A setup that outlived its deadline is over: TRACK_INFO arriving afterwards must neither register
-// the subscription again nor send its SUBSCRIBE.
-test("a subscribe that timed out waiting on TRACK_INFO stays unregistered when it arrives", async () => {
+// A setup that outlived its deadline is over: its TRACK stream is reset, even one still waiting for a
+// slot, and the subscription is neither registered again nor sent as a SUBSCRIBE.
+test.each([
+	["lite-05 subscribe waiting on the TRACK_INFO", Version.DRAFT_05, false],
+	["lite-06 subscribe waiting on the TRACK_INFO", Version.DRAFT_06, false],
+	["lite-07 subscribe waiting on the TRACK_INFO", Version.DRAFT_07, false],
+	["lite-05 subscribe waiting on a stream slot for the TRACK", Version.DRAFT_05, true],
+] as const)("a %s that times out leaves nothing behind", async (_, version, parked) => {
 	jest.useFakeTimers();
 	const warn = spyOn(console, "warn").mockImplementation(() => {});
-	const { quic, streams } = fakeSession();
-	const subscriber = new Subscriber(quic, Version.DRAFT_05, HopSchema.parse(1n));
+	const { quic, streams } = fakeSession(parked ? [0] : []);
+	const subscriber = new Subscriber(quic, version, HopSchema.parse(1n));
 	try {
 		const track = subscriber.consume(Path.from("room")).track("video").subscribe();
 		await drainUntil(() => streams.length === 1);
-		await streams[0].reading;
+		if (!parked) await streams[0].reading;
 
-		jest.advanceTimersByTime(10_000);
+		jest.advanceTimersByTime(SUBSCRIBE_SETUP_TIMEOUT_MS);
 		await drainUntil(() => track.closed.peek() !== undefined);
-		await answerTrackInfo(streams[0]);
-		for (let i = 0; i < MAX_DRAIN_TURNS; i++) await Promise.resolve();
+
+		let aborted = false;
+		void streams[0].aborted.then(() => {
+			aborted = true;
+		});
+		if (parked) streams[0].release();
+		await drainUntil(() => aborted);
+		expect(aborted).toBe(true);
 		expect(streams.length).toBe(1);
 
-		// A GROUP for a registered subscription is read; one for a forgotten id is ignored.
-		let read = false;
-		const reader = {
-			stop: () => {
-				read = true;
+		// A GROUP for a forgotten id is ignored without touching its stream.
+		const touched: PropertyKey[] = [];
+		const reader = new Proxy({} as Reader, {
+			get: (_, key) => {
+				touched.push(key);
+				return () => {};
 			},
-		} as unknown as Reader;
+		});
 		await subscriber.runGroup(new Group({ subscribe: 0n, sequence: 0 }), reader);
-		expect(read).toBe(false);
+		expect(touched).toEqual([]);
 	} finally {
 		subscriber.close();
 		warn.mockRestore();
