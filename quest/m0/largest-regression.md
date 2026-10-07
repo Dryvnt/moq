@@ -4,8 +4,9 @@
 
 A relay copy that subscribes upstream again and hears that upstream's largest
 group is below the newest group it has cached treats it as a reused name: the
-copy ends with an error, its source closes so the front ends, and readers
-re-request. Today the copy keeps its stale live floor (`set_live` in
+copy ends with an error, its source closes so the front ends, and the readers
+it was serving re-request. A new request arriving as the front ends gets a
+fresh front without an error. Today the copy keeps its stale live floor (`set_live` in
 `rs/moq-net/src/model/track.rs`), so a viewer returning within the linger to a
 publisher that restarted at group 0 gets the old instance's cached group and
 then nothing until the new sequence passes it.

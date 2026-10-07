@@ -56,7 +56,9 @@ Decisions (2026-10-07):
   the claim leaves. The route's served cache hands one source to every front
   for the path (a plain front and a peer's filtered front can share it), so
   the trigger is the source losing its last consumer, not one front ending.
-  The session keeps that state in more than one place; all of it goes.
+  Withdrawing the claim or closing the session still closes the source at
+  once, as today, and in-flight consumers drain on their own. The session
+  keeps that state in more than one place; all of it goes.
 - This also reclaims the filtered front a peer session leaves behind (moved
   here from [Front parking](/quest/m1/origin-front-parks.md)): a hop in a
   covering route chain gets its own filtered front, which today lives as long

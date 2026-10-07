@@ -53,7 +53,10 @@ Decisions (2026-10-07):
 Verification: a `moq-net` integration test on the simulated network (10 ms
 latency) asserting exactly one `used` edge and no `unused` while the reader
 stays subscribed, on lite-05, 06, and 07, direct and through one relay. It
-fails on `main` today. A JS counterpart for the JS side.
+fails on `main` today. The relay case controls the ordering so the
+downstream TRACK FIN is handled before its SUBSCRIBE. A boundary test fills
+the per-session subscription cap with held TRACK streams and checks the next
+one is refused. JS counterparts for the JS side.
 
 Public API: none. Wire: semantics only (holding the TRACK stream open), no new
 fields.
