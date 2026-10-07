@@ -540,8 +540,9 @@ export class Subscriber {
 		});
 
 		// Open the stream under a timeout. The stream handle flows back via `state`
-		// so the timeout path can abort it if it finishes opening after the deadline.
-		const state: { stream?: Stream } = {};
+		// so the timeout path can abort it if it finishes opening after the deadline,
+		// and `cancelled` stops a setup that is still running once the deadline passed.
+		const state: { stream?: Stream; cancelled?: boolean } = {};
 		const setup = this.#openSubscribe(state, msg, request, id, timescale);
 
 		let opened: { stream: Stream; entry: SubscribeEntry };
@@ -556,6 +557,7 @@ export class Subscriber {
 			// The setup outlived its deadline waiting for the first response: a control
 			// timeout, not content that arrived late.
 			const e = err instanceof TimeoutError ? controlTimeout(err) : await sessionCause(this.#quic, err);
+			state.cancelled = true;
 			request.reject(e);
 			this.#subscribes.delete(id);
 			console.warn(`subscribe error: id=${id} broadcast=${broadcast} track=${request.name} error=${reason(e)}`);
@@ -640,7 +642,7 @@ export class Subscriber {
 	// SUBSCRIBE is accepted implicitly (no SUBSCRIBE_OK). Older drafts carry no
 	// per-track properties, so they resolve to defaults and just drain SUBSCRIBE_OK.
 	async #openSubscribe(
-		state: { stream?: Stream },
+		state: { stream?: Stream; cancelled?: boolean },
 		msg: Subscribe,
 		request: track.Request,
 		id: bigint,
@@ -652,6 +654,9 @@ export class Subscriber {
 		if (supportsTrackStream(this.version)) {
 			// Fetch the immutable properties once via the TRACK stream.
 			const info = await this.#trackInfo(msg.broadcast, msg.epoch, msg.track);
+			// The deadline passed while TRACK_INFO was pending: the request is already rejected,
+			// so don't register it again or send its SUBSCRIBE.
+			if (state.cancelled) throw new Error("subscribe cancelled before it was sent");
 			producer = request.accept(this.#toModelInfo(info));
 			timescale.set(info.timescale);
 		} else {

@@ -1,13 +1,14 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, jest, spyOn, test } from "bun:test";
 import { Signal } from "@moq/signals";
 import type { Probe as ProbeStats } from "../connection/stats.ts";
 import * as Epoch from "../epoch.ts";
 import { error, fromTransport, reason, StreamCode, StreamError } from "../error.ts";
 import { HopSchema, isAnonymous, MAX_HOPS, Route, UNKNOWN_HOP } from "../hop.ts";
 import * as Path from "../path.ts";
-import { Writer } from "../stream.ts";
+import { type Reader, Writer } from "../stream.ts";
 import * as Time from "../time.ts";
 import { type AnnounceBroadcast, AnnounceInit, AnnounceOk, encodeAnnounceBroadcast } from "./announce.ts";
+import { Group } from "./group.ts";
 import { Probe } from "./probe.ts";
 import { Subscriber } from "./subscriber.ts";
 import { TrackInfo } from "./track.ts";
@@ -880,6 +881,40 @@ test.each([
 	const stuck = streams[stage === "track" ? 0 : 1];
 	stuck.release();
 	await stuck.aborted;
+});
+
+// A setup that outlived its deadline is over: TRACK_INFO arriving afterwards must neither register
+// the subscription again nor send its SUBSCRIBE.
+test("a subscribe that timed out waiting on TRACK_INFO stays unregistered when it arrives", async () => {
+	jest.useFakeTimers();
+	const warn = spyOn(console, "warn").mockImplementation(() => {});
+	const { quic, streams } = fakeSession();
+	const subscriber = new Subscriber(quic, Version.DRAFT_05, HopSchema.parse(1n));
+	try {
+		const track = subscriber.consume(Path.from("room")).track("video").subscribe();
+		await drainUntil(() => streams.length === 1);
+		await streams[0].reading;
+
+		jest.advanceTimersByTime(10_000);
+		await drainUntil(() => track.closed.peek() !== undefined);
+		await answerTrackInfo(streams[0]);
+		for (let i = 0; i < MAX_DRAIN_TURNS; i++) await Promise.resolve();
+		expect(streams.length).toBe(1);
+
+		// A GROUP for a registered subscription is read; one for a forgotten id is ignored.
+		let read = false;
+		const reader = {
+			stop: () => {
+				read = true;
+			},
+		} as unknown as Reader;
+		await subscriber.runGroup(new Group({ subscribe: 0n, sequence: 0 }), reader);
+		expect(read).toBe(false);
+	} finally {
+		subscriber.close();
+		warn.mockRestore();
+		jest.useRealTimers();
+	}
 });
 
 test("a fetch started after the subscriber closes rejects without opening a stream", async () => {
