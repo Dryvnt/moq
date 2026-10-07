@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import * as Catalog from "@moq/hang/catalog";
 import * as Container from "@moq/hang/container";
 import * as Json from "@moq/json";
@@ -314,6 +314,49 @@ describe("catalog", () => {
 			expect(source.out.status.peek()).toBe("live");
 			expect(videoRenditions(source)).toEqual(["hd"]);
 		} finally {
+			source.close();
+			owner.close();
+		}
+	});
+
+	it("subscribes again after a relay resets the catalog of a broadcast that stays open", async () => {
+		// A publisher that restarts before the relay drops its old session reroutes the same broadcast
+		// handle, then the relay resets the catalog the old session served.
+		const owner = new Origin.Producer();
+		const path = Path.from("room/cam.hang");
+		const producer = publish(owner, path);
+		const serve = () => {
+			const track = producer.createTrack(Catalog.TRACK);
+			new Json.Snapshot.Producer<Catalog.Root>({ track, compression: "none", deltaRatio: 0 }).update({
+				video: { renditions: { hd: video("avc1.42001f") } },
+			} as Catalog.Root);
+			return track;
+		};
+		const first = serve();
+		const source = new Broadcast({ origin: owner, name: path, enabled: true, catalogFormat: "hang" });
+		const warn = console.warn;
+		console.warn = () => {};
+		try {
+			await settle();
+			expect(source.out.status.peek()).toBe("live");
+			const handle = source.out.active.peek();
+
+			jest.useFakeTimers();
+			first.close(new Moq.Error.Stream(Moq.StreamCode.Internal));
+			serve();
+			for (let i = 0; i < 20; i++) await Promise.resolve();
+			expect(source.out.status.peek()).toBe("offline");
+
+			jest.advanceTimersByTime(1000);
+			jest.useRealTimers();
+			await settle();
+
+			expect(source.out.active.peek()).toBe(handle);
+			expect(source.out.status.peek()).toBe("live");
+			expect(videoRenditions(source)).toEqual(["hd"]);
+		} finally {
+			jest.useRealTimers();
+			console.warn = warn;
 			source.close();
 			owner.close();
 		}

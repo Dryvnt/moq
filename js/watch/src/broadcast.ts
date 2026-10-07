@@ -5,7 +5,7 @@ import type * as Moq from "@moq/net";
 import { Error as NetError, Path } from "@moq/net";
 import { Effect, type Getter, getter, type Inputs, type Readonlys, readonlys, Signal } from "@moq/signals";
 
-import { resubscribeOnTimeout } from "./media";
+import { resubscribe } from "./media";
 import { toHang } from "./msf";
 
 type ReferencedRendition = {
@@ -288,7 +288,7 @@ export class Broadcast {
 		const trackName = format === "hang" ? Catalog.TRACK : format === "hangz" ? Catalog.TRACK_COMPRESSED : "catalog";
 		const track = broadcast.track(trackName).subscribe({ priority: Catalog.PRIORITY.catalog });
 		effect.cleanup(() => track.close());
-		resubscribeOnTimeout(effect, track, trackName);
+		resubscribe(effect, track, trackName);
 
 		// The hang catalog is reconstructed from snapshots (and future deltas) via @moq/json, with
 		// "hangz" decompressing the `.z` track; MSF stays on its own one-blob-per-group fetch.

@@ -6,7 +6,8 @@ import { type Effect, type Getter, Signal } from "@moq/signals";
 /**
  * Open a media subscription with its max age on the initial request and every update.
  *
- * Reruns `effect` to subscribe again when the subscription times out before its first response.
+ * Reruns `effect` to subscribe again when the subscription fails for a reason that says nothing about
+ * the track (see {@link resubscribe}).
  *
  * @internal
  */
@@ -23,7 +24,7 @@ export function subscribeMedia(
 	const subscription = () => ({ priority: props.priority, maxAge: props.maxAge.peek() });
 	const subscriber = props.broadcast.track(props.track).subscribe(subscription());
 	effect.cleanup(() => subscriber.close());
-	resubscribeOnTimeout(effect, subscriber, props.track);
+	resubscribe(effect, subscriber, props.track);
 
 	effect.run((inner) => {
 		subscriber.update({ priority: props.priority, maxAge: inner.get(props.maxAge) });
@@ -32,36 +33,44 @@ export function subscribeMedia(
 	return subscriber;
 }
 
+// Spaces the attempts when a relay keeps resetting a track it cannot serve.
+const RESET_RETRY_MS = 1000;
+
 /**
- * Rerun `effect` once `subscriber` closes because its SUBSCRIBE went unanswered past this side's
- * setup deadline.
+ * Rerun `effect` once `subscriber` closes for a reason that says nothing about the track.
  *
- * Such a failure says nothing about the track, and each attempt already waited out the deadline,
- * so the rerun subscribes again at once. Every other reset ends the track: a withdrawn route
- * (Unroutable) comes back as a new broadcast handle, which reruns the caller anyway.
+ * - This side's setup deadline passed: each attempt already waited it out, so subscribe again at once.
+ * - The peer reset with Internal or SessionClosed: a relay sends these when the upstream session
+ *   serving the track dies. The broadcast handle can stay open across that, when the publisher
+ *   restarted on a new session the relay routes to, so nothing else would rerun the caller.
+ *   Subscribe again after {@link RESET_RETRY_MS}.
+ *
+ * Every other reset ends the track: a withdrawn route (Unroutable) comes back as a new broadcast
+ * handle, which reruns the caller anyway.
  *
  * @internal
  */
-export function resubscribeOnTimeout(effect: Effect, subscriber: Moq.Track.Subscriber, track: string): void {
+export function resubscribe(effect: Effect, subscriber: Moq.Track.Subscriber, track: string): void {
 	const retry = new Signal(false);
 	effect.get(retry);
 	effect.run((inner) => {
 		const closed = inner.get(subscriber.closed);
-		if (!timedOut(closed)) return;
-		console.warn(`subscription to ${track} timed out, subscribing again`, closed);
-		retry.set(true);
+		const delay = retryDelay(closed);
+		if (delay === undefined) return;
+		console.warn(`subscription to ${track} ended, subscribing again`, closed);
+		if (delay === 0) retry.set(true);
+		else inner.timer(() => retry.set(true), delay);
 	});
 }
 
-// Only the deadline raised here, which wraps a TimeoutError. A peer can reset with the same code at
-// once (and relays forward it), so retrying that would spin.
-function timedOut(err: Error | null | undefined): boolean {
-	return (
-		err instanceof NetError.Stream &&
-		err.code === StreamCode.ControlTimeout &&
-		err.cause instanceof Error &&
-		err.cause.name === "TimeoutError"
-	);
+// Only the deadline raised here, which wraps a TimeoutError, retries at once. A peer can reset with
+// the same code at once (and relays forward it), so retrying that would spin.
+function retryDelay(err: Error | null | undefined): number | undefined {
+	if (!(err instanceof NetError.Stream)) return undefined;
+	if (err.code === StreamCode.ControlTimeout && err.cause instanceof Error && err.cause.name === "TimeoutError")
+		return 0;
+	if (err.code === StreamCode.Internal || err.code === StreamCode.SessionClosed) return RESET_RETRY_MS;
+	return undefined;
 }
 
 /** Read the next media frame, ending playback when its subscription is reset. @internal */

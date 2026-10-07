@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import { Container } from "@moq/hang";
 import * as Moq from "@moq/net";
 import { Time } from "@moq/net";
@@ -95,16 +95,22 @@ const timedOut = () =>
 		cause: Object.assign(new Error("subscribe timed out after 10000ms"), { name: "TimeoutError" }),
 	});
 
-// A subscription that timed out here before its first response is opened again; any other reset ends it.
+// A subscription that timed out here before its first response is opened again at once, and one a relay
+// reset because its upstream died is opened again after a delay; any other reset ends it.
 // Driven the way the decoders drive it: one effect that subscribes and reads until `nextMedia` runs out.
 for (const [label, failure, resumes] of [
-	["a local setup timeout", timedOut(), true],
-	["a peer's ControlTimeout reset", new Moq.Error.Stream(Moq.StreamCode.ControlTimeout), false],
-	["Unroutable", new Moq.Error.Stream(Moq.StreamCode.Unroutable), false],
-	["Cancel", new Moq.Error.Stream(Moq.StreamCode.Cancel), false],
-	["NotFound", new Moq.Error.Stream(Moq.StreamCode.NotFound), false],
+	["a local setup timeout", timedOut(), "at once"],
+	["Internal", new Moq.Error.Stream(Moq.StreamCode.Internal), "after a delay"],
+	["SessionClosed", new Moq.Error.Stream(Moq.StreamCode.SessionClosed), "after a delay"],
+	["a peer's ControlTimeout reset", new Moq.Error.Stream(Moq.StreamCode.ControlTimeout), "never"],
+	["Unroutable", new Moq.Error.Stream(Moq.StreamCode.Unroutable), "never"],
+	["Cancel", new Moq.Error.Stream(Moq.StreamCode.Cancel), "never"],
+	["NotFound", new Moq.Error.Stream(Moq.StreamCode.NotFound), "never"],
 ] as const) {
-	test(`media ${resumes ? "re-subscribes" : "stays ended"} after ${label}`, async () => {
+	test(`media re-subscribes ${resumes} on ${label}`, async () => {
+		jest.useFakeTimers();
+		const warn = console.warn;
+		console.warn = () => {};
 		const broadcast = new Moq.Broadcast.Producer();
 		const handle = broadcast.consume();
 		const format = new Container.Legacy.Format("data");
@@ -140,11 +146,17 @@ for (const [label, failure, resumes] of [
 			new Container.Legacy.Producer(serving, format).encode(new Uint8Array([42]), Time.Micro(0), true);
 
 			await microtasks();
-			expect(frames).toEqual(resumes ? [42] : []);
+			expect(frames).toEqual(resumes === "at once" ? [42] : []);
+
+			jest.advanceTimersByTime(1000);
+			await microtasks();
+			expect(frames).toEqual(resumes === "never" ? [] : [42]);
 		} finally {
 			effect.close();
 			handle.close();
 			broadcast.close();
+			console.warn = warn;
+			jest.useRealTimers();
 		}
 	});
 }
