@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import * as Catalog from "@moq/hang/catalog";
+import * as Container from "@moq/hang/container";
 import * as Moq from "@moq/net";
-import { Origin, Path } from "@moq/net";
+import { Origin, Path, Time } from "@moq/net";
 import { Effect, Signal } from "@moq/signals";
 import { Broadcast } from "./broadcast";
+import { nextMedia, subscribeMedia } from "./media";
 
 function publish(origin: Origin.Producer, path: Path.Valid) {
 	const broadcast = origin.createBroadcast(path);
@@ -227,6 +229,61 @@ describe("blind resolution", () => {
 		route.close();
 		owner.close();
 		await settle();
+	});
+});
+
+describe("republish", () => {
+	it("hands media a new broadcast to subscribe to after an unannounce and re-announce", async () => {
+		// A media subscription ended by its route going away is not retried on the old handle:
+		// the re-announce has to bring a new one, which reruns the subscribing effect.
+		const owner = new Origin.Producer();
+		const path = Path.from("room/cam.hang");
+		const first = publish(owner, path);
+		first.createTrack("video");
+		const source = new Broadcast({ origin: owner, name: path, enabled: true, catalogFormat: "manual" });
+		const format = new Container.Legacy.Format("data");
+		const effect = new Effect();
+		const frames: number[] = [];
+		effect.run((inner) => {
+			const active = source.relativeBroadcast(inner, undefined);
+			if (!active) return;
+			const sub = subscribeMedia(inner, {
+				broadcast: active,
+				track: "video",
+				priority: 0,
+				maxAge: new Signal(Time.Milli(10_000)),
+			});
+			if (!sub) return;
+			const consumer = new Container.Consumer(sub, { format });
+			inner.cleanup(() => consumer.close());
+			inner.spawn(async () => {
+				for (;;) {
+					const next = await nextMedia(consumer);
+					if (!next) break;
+					if (next.frame) frames.push(next.frame.payload[0]);
+				}
+			});
+		});
+		try {
+			await settle();
+			const old = source.out.active.peek();
+			expect(old).toBeDefined();
+
+			first.close();
+			await settle();
+			const second = publish(owner, path);
+			const track = second.createTrack("video");
+			await settle();
+			expect(source.out.active.peek()).not.toBe(old);
+
+			new Container.Legacy.Producer(track, format).encode(new Uint8Array([42]), Time.Micro(0), true);
+			await settle();
+			expect(frames).toEqual([42]);
+		} finally {
+			effect.close();
+			source.close();
+			owner.close();
+		}
 	});
 });
 
