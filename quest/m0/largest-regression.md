@@ -19,13 +19,19 @@ Found while scoping [Idle fronts](/quest/m0/idle-fronts.md) (2026-10-07):
 under a prefix claim the relay never sees the worker close a broadcast, so a
 restart at the same path reaches a lingering copy unannounced. A publisher
 that restarts its group sequence under the same name is buggy, and this makes
-that bug visible instead of a silent stall. Check first that no legitimate
-answer reports a largest group below what a copy already holds from the same
-instance, notably a same-epoch resume onto a replica that has fallen behind.
+that bug visible instead of a silent stall.
+
+A lower largest group alone doesn't prove a restart: a same-epoch resume onto
+a replica that has fallen behind reports one legitimately, and must keep
+waiting as today. The copy ends only when the answer comes from the route it
+was last served from without an epoch, where no cross-route resume happens,
+or names a different epoch than the copy holds. Check for any other
+legitimate case before relying on that split.
 
 Verification: mocked time, a publisher restarting a path at group 0 within
 the linger. The returning reader gets an error and then the new instance from
-group 0, never the old group.
+group 0, never the old group. A same-epoch standby behind the cached copy
+keeps the copy and resumes it.
 
 Public API: none. Wire: none.
 

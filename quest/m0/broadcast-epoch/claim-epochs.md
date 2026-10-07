@@ -37,6 +37,10 @@ Decisions (2026-10-07, proposed for the maintainer):
   That join rule is unsafe without epochs, because a downstream relay's
   lingering copy would land on another worker under its cached track; with
   them, the copy names its epoch and is refused on a mismatch.
+- A refusal of a front's learned epoch means that instance is gone: the front
+  ends, and a request that joined it re-resolves onto a fresh front (a new
+  TRACK_INFO exchange) instead of failing. Only readers the old instance was
+  serving see a cut.
 - A front someone reads stays on its instance even when a cheaper route
   appears: moving it would start a second instance at the path. A worker that
   wants its viewers off closes its outputs, and they re-request.
@@ -66,7 +70,9 @@ After a drain, an unread path re-resolves to the cheaper worker at once. A
 worker restarting an output within the linger delivers the new instance from
 its first group, with nothing stale. A worker answering with a per-output
 epoch serves its first viewer without a cut. A worker closing a path while
-it is read sends the re-request to the cheaper worker as a new instance.
+it is read sends the re-request to the cheaper worker as a new instance. A
+request joining an unread front whose worker restarted its output reaches the
+new instance without an error.
 `just test interop --all`.
 
 Public API: Rust and JS, the broadcast's epoch and what `accept` does with
