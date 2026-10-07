@@ -32,13 +32,18 @@ Decisions (2026-10-07):
 
 - An open TRACK stream counts as interest. The publisher keeps its query
   until the requester FINs or resets the TRACK stream. The subscriber FINs it
-  once its first SUBSCRIBE is sent, or once its own demand goes (an info-only
-  query). The hold chains across hops, so demand stays continuous end to end.
-  It is backward compatible: an older subscriber FINs at once, as today.
-- Accept the residual: QUIC doesn't order the two streams, so losing the
-  SUBSCRIBE while the TRACK FIN arrives can still flap for one retransmit
-  timeout. Closing it would mean holding TRACK until the first response, and
-  lite-07 has no SUBSCRIBE_OK.
+  once its SUBSCRIBE stream has its first response (the start, a group, an
+  end, or a reset), or once its own demand goes (an info-only query). The hold
+  chains across hops, so demand stays continuous end to end. It is backward
+  compatible: an older subscriber FINs at once, as today.
+- Holding only until SUBSCRIBE is sent isn't enough: QUIC doesn't order the
+  two streams, and a relay that handles the TRACK FIN before the SUBSCRIBE
+  parks the track and drops its copy at once, letting go upstream. Waiting for
+  the first response costs one stream held for about a round trip.
+- A held TRACK stream is demand without a subscription, so it counts against
+  the per-session subscription cap from
+  [Request caps](/quest/m0/request-caps.md); a peer can't hold more interest
+  than it could by subscribing.
 - Not pipelining TRACK and SUBSCRIBE, which the draft already allows: it
   still races, and every hop would have to buffer frames until TRACK_INFO.
 - Consumers never debounce demand; the docs promise clean edges.
@@ -52,6 +57,10 @@ fails on `main` today. A JS counterpart for the JS side.
 
 Public API: none. Wire: semantics only (holding the TRACK stream open), no new
 fields.
+
+## Required
+
+- [Request caps](/quest/m0/request-caps.md) - the per-session subscription cap a held TRACK stream counts against
 
 ## Related
 

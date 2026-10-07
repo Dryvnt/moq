@@ -52,7 +52,9 @@ Decisions:
 - A serving front follows the best route among those it may resume across
   (decided 2026-10-04, replacing Stay; narrowed 2026-10-07 after #4942):
   routes with its epoch, or none for a front resolved without one, which stays
-  on its route. An unread front ends instead of moving
+  on its route until a route with an epoch wins the path and supersedes it.
+  An idle front (every track forgotten, no consumer holding its broadcast,
+  not waiting for coverage) ends instead of moving
   ([Idle fronts](/quest/m0/idle-fronts.md)). A join or re-price must rehash
   every epoch front below the prefix, since rendezvous moves exactly the paths
   the changed route now wins; only those fronts re-select. A leave wakes only

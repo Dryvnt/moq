@@ -43,11 +43,25 @@ Decisions (2026-10-07):
   consumer holds its broadcast. Ending only after the linger keeps the cache
   window for a returning viewer, needs no wire change, and doesn't conflict
   with the draft's Resume text, which pins subscriptions, not idle fronts.
+  A front serving a local source forgets an unread track outright, so it ends
+  as soon as it goes unread; reaching a local source again is free.
+- A request must never join a front that is ending: the front leaves the
+  origin's front table under the lock before it ends (or `request()` treats an
+  ending front as gone), so a newcomer gets a fresh front rather than a
+  broadcast that closes at once.
 - A front still waiting for coverage
   ([Front parking](/quest/m1/origin-front-parks.md)) is not idle and stays.
-- When a front ends, the session drops the placeholder source it served, so
-  per-path state under a claim goes with the front instead of piling up until
-  the claim leaves.
+- The session drops a placeholder source once it has no consumers left, so
+  per-path state under a claim goes with its fronts instead of piling up until
+  the claim leaves. The route's served cache hands one source to every front
+  for the path (a plain front and a peer's filtered front can share it), so
+  the trigger is the source losing its last consumer, not one front ending.
+  The session keeps that state in more than one place; all of it goes.
+- This also reclaims the filtered front a peer session leaves behind (moved
+  here from [Front parking](/quest/m1/origin-front-parks.md)): a hop in a
+  covering route chain gets its own filtered front, which today lives as long
+  as the route, one per peer session that both publishes and subscribes or
+  reconnects with a fresh hop.
 - A claim worker that re-serves a path after closing it is a new instance.
   Document that in `doc/concept/moq-lite.md` Resume: such a worker keeps its
   group sequence going or announces the exact path with a fresh epoch, and
@@ -60,13 +74,16 @@ Verification: a relay integration test with two `dynamic` claims on their own
 sessions (mocked time): read P, leave, close the output, drain the serving
 claim, advance past the linger, and check a new session's P comes from the
 other claim and that the first session holds no source for P. A `front.rs`
-unit test for the end condition, including a parked front that must stay.
+unit test for the end condition, including a parked front that must stay,
+and an origin test of a request racing a front's end (like `front.rs`'s
+`a_reader_racing_the_forget_keeps_the_track`, one level up). The front count
+returns to the plain front after a peer session closes.
 
 Public API: none expected. Wire: none.
 
 ## Related
 
 - [Prefix route fronts](/quest/m0/prefix-route-fronts.md) - bounds how many fronts a prefix route can mint at once; this reclaims idle ones
-- [Front parking](/quest/m1/origin-front-parks.md) - a front waiting for coverage must survive this
+- [Front parking](/quest/m1/origin-front-parks.md) - a front waiting for coverage must survive this; the filtered-front leak moved here from it
 - [Route wakes](/quest/m1/route-wakes.md) - indexes fronts per route, so an ended front must drop its entries
 - [Broadcast epochs](/quest/m0/broadcast-epoch/README.md) - restarted publishers mint a fresh epoch, the documented fix for a re-served path
