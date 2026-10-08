@@ -1483,6 +1483,7 @@ impl<S: crate::transport::poll::Session> kio::Task for SourceServe<S> {
 						subscriber: self.subscriber.clone(),
 						path: self.path.clone(),
 						epoch: self.epoch.clone(),
+						source: (*self.source).clone(),
 						name: request.name().to_string(),
 					};
 					// One machine per track serves its lone subscription and any number
@@ -1748,6 +1749,7 @@ mod tests {
 				subscriber,
 				path: Path::new("room").to_owned(),
 				epoch: None,
+				source: crate::broadcast::Info::new().produce(),
 				name: "video".to_string(),
 			};
 			let broadcast = crate::broadcast::Info::new().produce();
@@ -1801,6 +1803,7 @@ mod tests {
 			subscriber,
 			path: Path::new("room").to_owned(),
 			epoch: None,
+			source: crate::broadcast::Info::new().produce(),
 			name: "video".to_string(),
 		};
 		let broadcast = crate::broadcast::Info::new().produce();
@@ -1970,6 +1973,7 @@ mod tests {
 				subscriber: subscriber.clone(),
 				path: Path::new("room").to_owned(),
 				epoch: None,
+				source: crate::broadcast::Info::new().produce(),
 				name: "video".to_string(),
 			},
 			request,
@@ -2027,6 +2031,7 @@ mod tests {
 					subscriber,
 					path: Path::new("room").to_owned(),
 					epoch: None,
+					source: crate::broadcast::Info::new().produce(),
 					name: "video".to_string(),
 				},
 				request,
@@ -2076,6 +2081,7 @@ mod tests {
 			subscriber,
 			path: Path::new("room/host").to_owned(),
 			epoch: None,
+			source: crate::broadcast::Info::new().produce(),
 			name: "catalog.json".to_string(),
 		};
 
@@ -2153,6 +2159,7 @@ mod tests {
 					subscriber,
 					path: Path::new("room/host").to_owned(),
 					epoch: None,
+					source: crate::broadcast::Info::new().produce(),
 					name: "catalog.json".to_string(),
 				},
 				session,
@@ -3711,6 +3718,9 @@ struct TrackServe<S: crate::transport::poll::Session> {
 	path: PathOwned,
 	/// The publisher instance to ask for; the peer refuses a request for another.
 	epoch: Option<crate::Epoch>,
+	/// The minted source the track belongs to, closed once the route shows it serves new
+	/// content under the name.
+	source: crate::broadcast::Producer,
 	name: String,
 }
 
@@ -4535,6 +4545,16 @@ impl<S: crate::transport::poll::Session> ServeLoop<S> {
 									lite::SubscribeResponse::Start(start) => {
 										// Where the live feed is, on versions whose answer says.
 										if serve.subscriber.version.has_largest() {
+											// A route without an epoch serves one instance, so a feed below what
+											// the copy cached is a publisher reusing the name for new content.
+											// The source closes first: its front ends before any reader sees the
+											// copy fail, so a reader re-requesting gets a fresh one.
+											if serve.epoch.is_none() && self.serving.regresses(start.largest) {
+												tracing::warn!(broadcast = %serve.subscriber.log_path(&serve.path), track = %serve.name, largest = ?start.largest, "upstream went back in its group sequence");
+												self.serving.withhold_cache();
+												serve.source.close();
+												return Poll::Ready(ServeEnd::GiveBack(Error::Unroutable));
+											}
 											self.serving.set_live(start.largest);
 										}
 										// A START describes the demand the SUBSCRIBE carried.

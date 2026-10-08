@@ -1755,9 +1755,9 @@ where
 			let mut this = self.clone();
 
 			let path = path.to_owned();
-			let broadcast = broadcast.clone();
+			let source = (*source).clone();
 			subscribes.push(async move {
-				this.run_subscribe(path, broadcast, request).await;
+				this.run_subscribe(path, source, request).await;
 			});
 		}
 
@@ -1767,9 +1767,10 @@ where
 	async fn run_subscribe(
 		&mut self,
 		broadcast_path: Path<'_>,
-		// Held for the subscription's lifetime but never watched: the broadcast ending
-		// is a retraction, which does not disturb a subscription already in flight.
-		_broadcast: broadcast::Dynamic,
+		// The minted source, never watched: its end is a retraction, which does not disturb a
+		// subscription already in flight. Closed once the route shows it serves new content
+		// under the name.
+		source: broadcast::Producer,
 		request: track::Request,
 	) {
 		// Data streams wait on the alias bound by SUBSCRIBE_OK, so leave the model request
@@ -1780,7 +1781,7 @@ where
 		let mut target = Target::Request(request);
 		loop {
 			let Some(idle) = self
-				.subscribe_once(&broadcast_path, &track_name, target, &mut group_fetches)
+				.subscribe_once(&broadcast_path, &track_name, &source, target, &mut group_fetches)
 				.await
 			else {
 				return;
@@ -1802,6 +1803,7 @@ where
 		&mut self,
 		broadcast_path: &Path<'_>,
 		track_name: &str,
+		source: &broadcast::Producer,
 		target: Target,
 		group_fetches: &mut TaskSet,
 	) -> Option<Idle> {
@@ -2032,6 +2034,20 @@ where
 			Some(idle) => {
 				if !self.state.lock().subscribes.contains_key(&request_id) {
 					// Aborted with the session while the answer was in hand.
+					return None;
+				}
+				// moq-transport names no publisher instance, so a Largest below what the copy
+				// cached is a publisher reusing the name for new content. The source closes
+				// first: its front ends before any reader sees the copy fail, so a reader
+				// re-requesting gets a fresh one.
+				if idle.track.regresses(resuming.flatten()) {
+					tracing::warn!(broadcast = %self.origin.absolute(broadcast_path), track = %track_name, ?largest, "upstream went back in its group sequence");
+					let mut track = idle.track;
+					track.withhold_cache();
+					source.close();
+					self.remove_subscribe(request_id);
+					let _ = track.abort(Error::Unroutable);
+					self.cancel_subscribe(stream, request_id).await;
 					return None;
 				}
 				(idle.track, idle.dynamic)
@@ -4927,8 +4943,9 @@ mod tests {
 		drop(track);
 		drop(consumer);
 
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		moq_net_sim::timeout(std::time::Duration::from_secs(1), serving)
@@ -4977,8 +4994,9 @@ mod tests {
 
 		let request = dynamic.requested_track().await.expect("no track requested");
 
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		// Let the SUBSCRIBE go out. No SUBSCRIBE_OK is coming, so the subscription never
@@ -5040,8 +5058,9 @@ mod tests {
 
 		let request = dynamic.requested_track().await.expect("no track requested");
 
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		// Let the SUBSCRIBE go out, then retract the broadcast before any response.
@@ -5143,8 +5162,9 @@ mod tests {
 
 		let request = dynamic.requested_track().await.expect("no track requested");
 
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		settle().await;
@@ -5282,8 +5302,9 @@ mod tests {
 		// subscription reached Established rather than assume it.
 		let probe = subscriber.clone();
 
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		// Let the SUBSCRIBE go out and the SUBSCRIBE_OK come back, so the subscription is
@@ -5361,8 +5382,9 @@ mod tests {
 		let request = dynamic.requested_track().await.expect("no track requested");
 
 		let probe = subscriber.clone();
+		let source = producer.clone();
 		let serving = moq_net_sim::spawn(async move {
-			subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+			subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 		});
 
 		settle().await;
@@ -8917,9 +8939,10 @@ mod joining_fetch_tests {
 			let request = dynamic.requested_track().await.expect("no track requested");
 
 			let mut serving_subscriber = subscriber.clone();
+			let source = producer.clone();
 			let serving = moq_net_sim::spawn(async move {
 				serving_subscriber
-					.run_subscribe(Path::new("broadcast"), dynamic, request)
+					.run_subscribe(Path::new("broadcast"), source, request)
 					.await;
 			});
 
