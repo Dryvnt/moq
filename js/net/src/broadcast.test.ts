@@ -183,6 +183,59 @@ test("held info lookups keep a request until the last one lets go", async () => 
 	broadcast.close();
 });
 
+test("an abandoned info lookup stops counting as demand, and its request goes once answered", async () => {
+	const broadcast = new BroadcastProducer();
+	const demand = broadcast.demand();
+	const pulled = wireOf(broadcast).requested();
+	const hold = new AbortController();
+	const info = wireOf(broadcast).resolveTrackInfo("media", hold.signal);
+	const request = await pulled;
+	if (!request) throw new Error("expected request");
+	expect(demand.used.peek()).toBe(true);
+
+	hold.abort();
+	await expect(info).rejects.toThrow();
+	expect(demand.used.peek()).toBe(false);
+
+	// The handler still gets an open track, and the answer lets it go.
+	const producer = request.accept({ timescale: Timescale.MILLI });
+	producer.writeString("late");
+	await producer.closed;
+	broadcast.close();
+});
+
+test("a held info lookup on an inserted track counts as demand until it lets go", async () => {
+	const broadcast = new BroadcastProducer();
+	const demand = broadcast.demand();
+	const track = broadcast.createTrack("media", { timescale: Timescale.MILLI });
+	const hold = new AbortController();
+	await wireOf(broadcast).resolveTrackInfo("media", hold.signal);
+	expect(demand.used.peek()).toBe(true);
+
+	hold.abort();
+	expect(demand.used.peek()).toBe(false);
+	expect(track.closed.peek()).toBeUndefined();
+	broadcast.close();
+});
+
+test("removeTrack leaves a track that only a request serves", async () => {
+	const broadcast = new BroadcastProducer();
+	const demand = broadcast.demand();
+	const pulled = wireOf(broadcast).requested();
+	const subscriber = broadcast.track("media").subscribe();
+	const request = await pulled;
+	if (!request) throw new Error("expected request");
+	const producer = request.accept();
+
+	broadcast.removeTrack("media");
+	expect(demand.used.peek()).toBe(true);
+	expect(producer.closed.peek()).toBeUndefined();
+
+	subscriber.close();
+	producer.close();
+	broadcast.close();
+});
+
 test("closing a broadcast rejects a dequeued request", async () => {
 	const broadcast = new BroadcastProducer();
 	const pulled = wireOf(broadcast).requested();

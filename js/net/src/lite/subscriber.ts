@@ -805,7 +805,8 @@ export class Subscriber {
 	// Resolve a track's immutable model info via a TRACK stream (lite-05+), for the
 	// ConsumeBroadcast backing track.Consumer.query(). On older drafts there's no TRACK
 	// stream, so this rejects rather than fabricating defaults. The TRACK stream stays
-	// open until `hold` aborts, so the publisher keeps the track for whoever asked here.
+	// open until `hold` aborts, so the publisher keeps the track for whoever asked here;
+	// aborting it before TRACK_INFO resets the stream.
 	async resolveTrackInfo(
 		broadcast: Path.Valid,
 		track: string,
@@ -815,7 +816,7 @@ export class Subscriber {
 		if (!supportsTrackStream(this.version)) {
 			throw new Error("track info requires moq-lite-05 or newer");
 		}
-		const { info, stream } = await this.#trackInfo(broadcast, epoch, track);
+		const { info, stream } = await this.#trackInfo(broadcast, epoch, track, hold);
 		if (hold && !hold.aborted) hold.addEventListener("abort", () => stream.close(), { once: true });
 		else stream.close();
 		return this.#toModelInfo(info);

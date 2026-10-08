@@ -11,6 +11,7 @@ import type * as Path from "../path.ts";
 import { type Reader, type Stream, Writer } from "../stream.ts";
 import { Milli, Timescale, Timestamp } from "../time.ts";
 import type * as track from "../track.ts";
+import { untilAborted } from "../util/abort.ts";
 import { type Advertised, type Advertisements, wireOf } from "../wire.ts";
 import { AnnounceInit, AnnounceOk, type AnnounceRequest, encodeAnnounceBroadcast } from "./announce.ts";
 import { Datagram as DatagramMessage } from "./datagram.ts";
@@ -75,14 +76,14 @@ function acknowledged(writer: Writer): Promise<void> {
 	return writer.closed.catch(() => {});
 }
 
-/** A track's cached TRACK_INFO, and the request behind it while TRACK streams hold it. */
+/** A track's cached TRACK_INFO, and the request behind it while requesters hold it. */
 interface TrackInfoEntry {
 	info: Promise<TrackInfoMessage>;
-	/** The open TRACK streams holding the request. */
+	/** The requesters holding the request: open TRACK streams, and FETCHes awaiting the answer. */
 	holders: number;
-	/** Whether the application answered. Until then the request stays wanted, so a TRACK stream can join it. */
+	/** Whether the application answered, so a FETCH can reuse it after the request is let go. */
 	answered: boolean;
-	/** Lets the request go, once it is answered and its last holder has closed. */
+	/** Lets the request go once its last holder leaves, abandoning it if still unanswered. */
 	release: AbortController;
 }
 
@@ -746,11 +747,21 @@ export class Publisher {
 		// response here, on the same scale as the group streams it competes with.
 		stream.writer.setPriority(sendOrder({ priority: msg.priority }));
 
+		// A FETCH requester leaves early by resetting its stream or losing its session, which
+		// lets go of a lookup still waiting on the answer.
+		const hold = new AbortController();
+		void stream.reader.closed.catch(() => hold.abort());
+
 		let group: group.Consumer | undefined;
 		try {
 			// The timescale is immutable, so serve exactly what TRACK_INFO advertised. Both
 			// come off the same front, so the metadata and the frames are one generation.
-			const info = await this.#resolveTrackInfo(front, msg.track);
+			let info: TrackInfoMessage;
+			try {
+				info = await this.#resolveTrackInfo(front, msg.track, hold.signal, true);
+			} finally {
+				hold.abort();
+			}
 			group = await wireOf(front).fetchGroup(msg.track, msg.group, { priority: msg.priority });
 			await this.#runFetchGroup(group, stream.writer, {
 				timescale: Timescale(info.timescale),
@@ -1034,21 +1045,27 @@ export class Publisher {
 	// Resolve (and cache) a track's immutable TRACK_INFO by asking the application.
 	// `resolveTrackInfo` triggers a TrackRequest the app answers with accept(TrackInfo);
 	// only the immutable properties are needed (not the groups). Cached because they're
-	// fixed for the track's lifetime. Rejects if the track is unavailable. Each `hold`
-	// keeps the request wanted until it aborts, so one TRACK stream closing never lets it
-	// go under another. A pending request is wanted anyway, so a TRACK stream arriving
-	// before the answer joins it even if every earlier one left. Once let go, the cached
-	// answer still serves a FETCH, but a TRACK stream asks again, since it is interest.
-	#resolveTrackInfo(front: broadcast.Consumer, track: string, hold?: AbortSignal): Promise<TrackInfoMessage> {
+	// fixed for the track's lifetime. Rejects if the track is unavailable, or once `hold`
+	// aborts. Each requester holds the lookup until `hold` aborts, and the lookup ends with
+	// its last holder, answered or not; an unanswered one is dropped, so the next requester
+	// asks again. A TRACK stream is interest, so it always holds a live lookup, while a
+	// FETCH (`reuse`) only needs the answer and takes one a released lookup left behind.
+	#resolveTrackInfo(
+		front: broadcast.Consumer,
+		track: string,
+		hold: AbortSignal,
+		reuse = false,
+	): Promise<TrackInfoMessage> {
+		hold.throwIfAborted();
 		let tracks = this.#trackInfo.get(front);
 		if (!tracks) {
 			tracks = new Map();
 			this.#trackInfo.set(front, tracks);
 		}
 
-		const holding = hold?.aborted === false ? hold : undefined;
 		let entry = tracks.get(track);
-		if (!entry || (holding && entry.release.signal.aborted)) {
+		if (reuse && entry?.answered) return entry.info;
+		if (!entry || entry.release.signal.aborted) {
 			const release = new AbortController();
 			const info = (async () => {
 				const info = await wireOf(front).resolveTrackInfo(track, release.signal);
@@ -1063,32 +1080,32 @@ export class Publisher {
 				});
 			})();
 
-			entry = { info, holders: 0, answered: false, release };
-			const created = entry;
+			const created: TrackInfoEntry = { info, holders: 0, answered: false, release };
 			info.then(
-				// Nothing holds the request now (a FETCH's lookup, or every TRACK stream left), so let it go.
 				() => {
 					created.answered = true;
-					if (created.holders === 0) release.abort();
 				},
 				// Don't poison the cache on failure: a later request may succeed.
-				() => tracks.delete(track),
+				() => {
+					if (tracks.get(track) === created) tracks.delete(track);
+				},
 			);
-			tracks.set(track, entry);
+			tracks.set(track, created);
+			entry = created;
 		}
 
-		if (holding) {
-			const held = entry;
-			held.holders++;
-			holding.addEventListener(
-				"abort",
-				() => {
-					if (--held.holders === 0 && held.answered) held.release.abort();
-				},
-				{ once: true },
-			);
-		}
-		return entry.info;
+		const held = entry;
+		held.holders++;
+		hold.addEventListener(
+			"abort",
+			() => {
+				if (--held.holders > 0) return;
+				held.release.abort();
+				if (!held.answered && tracks.get(track) === held) tracks.delete(track);
+			},
+			{ once: true },
+		);
+		return untilAborted(held.info, hold);
 	}
 
 	/**

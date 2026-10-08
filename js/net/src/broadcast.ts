@@ -27,8 +27,8 @@ export interface Announcer {
 let attachAnnouncer: (producer: Producer, announcer: Announcer) => void;
 let stampProducer: (producer: Producer, path: Path.Valid) => void;
 
-// Info lookups pending or held on a requested track. Each is demand, as a pending track request is in
-// Rust, though nobody subscribes.
+// Info lookups pending or held on a track. Each is demand, as a pending track request is in Rust,
+// though nobody subscribes.
 class Lookups {
 	pending = 0;
 	// Whether a lookup opened the request, so the last lookup to end closes it unless subscribed.
@@ -203,28 +203,45 @@ function subscribe(state: BroadcastState, name: string, options: track.Subscript
 	return logical(state, name).producer.subscribe(options);
 }
 
-// A pending lookup is demand, and so is a held one until `hold` aborts. The last lookup to end lets go
-// of a request a lookup opened that nobody subscribed to meanwhile.
+// A pending lookup is demand, and so is a held one until `hold` aborts, which also abandons it before
+// the answer. A request a lookup opened is let go once it is answered and nobody holds or subscribes
+// to it; closing it sooner would hand its handler a closed producer.
 async function resolveTrackInfo(state: BroadcastState, name: string, hold?: AbortSignal): Promise<track.Info> {
+	hold?.throwIfAborted();
 	const { producer, requested } = logical(state, name);
 	const lookups = state.lookups.get(producer);
 	if (!lookups) return producer.info();
 	if (requested) lookups.opened = true;
 	lookups.add(1);
-	const end = () => {
-		lookups.add(-1);
+
+	const info = producer.info();
+	let answered = false;
+	let ended = false;
+	const release = () => {
 		if (lookups.opened && lookups.pending === 0 && !producer.demand().used.peek()) producer.close();
 	};
-	let info: track.Info;
-	try {
-		info = await producer.info();
-	} catch (err) {
-		end();
-		throw err;
+	info.then(
+		() => {
+			answered = true;
+			if (ended) release();
+		},
+		() => {},
+	);
+	const end = () => {
+		ended = true;
+		lookups.add(-1);
+		if (answered) release();
+	};
+
+	if (!hold) {
+		try {
+			return await info;
+		} finally {
+			end();
+		}
 	}
-	if (hold && !hold.aborted) hold.addEventListener("abort", end, { once: true });
-	else end();
-	return info;
+	hold.addEventListener("abort", end, { once: true });
+	return untilAborted(info, hold);
 }
 
 // Serve a group from the local retained window by subscribing and scanning to the
@@ -350,7 +367,9 @@ export class Producer {
 			throw new Error(`duplicate track: ${track.name}`);
 		}
 
-		watchDemand(this.#state, track);
+		const lookups = this.#state.lookups.get(track) ?? new Lookups();
+		this.#state.lookups.set(track, lookups);
+		watchDemand(this.#state, track, lookups);
 		this.#state.tracks.set(track.name, track);
 
 		// A finished track keeps serving its cache, so only an abort evicts it.
