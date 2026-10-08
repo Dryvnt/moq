@@ -230,6 +230,17 @@ These land with the next breaking release, not the 2026-09-23 train.
     On a moq-transport track with `TIMESCALE`, an object without a Timestamp
     is malformed. A new subscriber with no start on an untimed track starts at
     the latest group.
+- **CMAF decodes at the frame timestamp.** A fragment's earliest sample
+  presents at its moq-net frame timestamp; `tfdt` only orders the samples. In
+  TypeScript, `Container.Format.decode` and `Cmaf.decodeDataSegment` take that
+  timestamp: pass `frame.timestamp` alongside `frame.payload`, or `undefined`
+  for an untimed frame, whose samples present at `tfdt`.
+  `Cmaf.decodeTimestamp` is gone; the frame timestamp is the fragment's time.
+  moq-mux's CMAF `Wire::write` refuses a track whose timescale isn't the init's
+  `mdhd` timescale with `fmp4::Error::TimescaleMismatch`. `import::Track` and
+  `TrackStream` accept a CMAF rendition's track at that timescale; a track you
+  create yourself declares it with `track::Info::with_timescale`. Both decoders refuse a `trun` whose
+  `data_offset` doesn't start at the next sample in the `mdat`.
 
 ## Wire
 

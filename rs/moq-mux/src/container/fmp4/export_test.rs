@@ -688,7 +688,7 @@ async fn unusable_framerate_uses_the_standard_fallback_rate() {
 	let fragment = chunk_now(&mut exporter).await.fragment().expect("a media fragment");
 	assert_eq!(fragment.duration, std::time::Duration::from_secs_f64(1.0 / 30.0));
 	let timescale = moq_net::Timescale::new(90_000).unwrap();
-	let decoded = super::decode(fragment.data, timescale, crate::container::fmp4::Kind::Video).unwrap();
+	let decoded = super::decode(fragment.data, None, timescale, crate::container::fmp4::Kind::Video).unwrap();
 	assert_eq!(decoded[0].duration.unwrap().as_scale(timescale), 3_000);
 }
 
@@ -1297,6 +1297,7 @@ fn annexb_frame(timestamp_us: u64, nals: &[&[u8]]) -> crate::container::Frame {
 fn video_payloads(fragment: &crate::container::fmp4::Fragment) -> Vec<Bytes> {
 	super::decode(
 		fragment.data.clone(),
+		None,
 		moq_net::Timescale::new(30_000).unwrap(),
 		super::Kind::Video,
 	)
@@ -1853,6 +1854,7 @@ async fn split_parameter_sets_case(
 		.flat_map(|fragment| {
 			super::decode(
 				fragment.data.clone(),
+				None,
 				moq_net::Timescale::new(30_000).unwrap(),
 				super::Kind::Video,
 			)
@@ -2121,6 +2123,96 @@ async fn hevc_main10_is_described_from_its_sps() {
 	assert_eq!(hev1.hvcc.chroma_format_idc, 1, "4:2:0");
 	assert_eq!(hev1.hvcc.bit_depth_luma_minus8, 2, "10-bit luma");
 	assert_eq!(hev1.hvcc.bit_depth_chroma_minus8, 2, "10-bit chroma");
+}
+
+/// The exporter re-fragments decoded samples, so a passthrough CMAF fragment whose `tfdt`
+/// still carries its source PTS exports at its moq-lite frame timestamp, B-frame order kept.
+#[tokio::test(start_paused = true)]
+async fn cmaf_source_exports_at_the_frame_timestamp() {
+	use hang::catalog::{Container, VideoCodec, VideoConfig};
+
+	let mut config = VideoConfig::new(VideoCodec::VP8);
+	config.coded_width = Some(320);
+	config.coded_height = Some(240);
+	let trak = super::synthesize_video_trak(1, 1_000_000, &config, None).unwrap();
+	let trex = mp4_atom::Trex {
+		track_id: 1,
+		default_sample_description_index: 1,
+		..Default::default()
+	};
+	config.container = Container::Cmaf {
+		init: super::encode_init(None, vec![trak], vec![trex]).unwrap(),
+	};
+
+	let mut broadcast = moq_net::broadcast::Info::new().produce();
+	let consumer = broadcast.consume();
+	let mut catalog = crate::catalog::Producer::new(&mut broadcast, crate::catalog::Config::default()).unwrap();
+	let track = broadcast.create_track("video", None).unwrap();
+	catalog
+		.modify()
+		.unwrap()
+		.video
+		.renditions
+		.insert("video".into(), config);
+
+	let source = 3_600_000_000;
+	let sample = |micros: u64, keyframe: bool| crate::container::Frame {
+		timestamp: moq_net::Timestamp::from_micros(micros).unwrap(),
+		payload: Bytes::from_static(&[0x10, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x40, 0x01, 0xf0, 0x00]),
+		keyframe,
+		duration: Some(moq_net::Timestamp::from_micros(33_000).unwrap()),
+	};
+	let samples = [
+		sample(source, true),
+		sample(source + 66_000, false),
+		sample(source + 33_000, false),
+	];
+	let info = super::FragmentInfo {
+		timescale: moq_net::Timescale::MICRO,
+		track_id: 1,
+		sequence_number: 0,
+		kind: super::Kind::Video,
+	};
+	let fragment = super::encode_fragment(info, &samples).unwrap();
+
+	let mut group = track.append_group().unwrap();
+	let mut frame = group
+		.create_frame(moq_net::frame::Info {
+			size: fragment.len() as u64,
+			timestamp: Some(moq_net::Timestamp::from_secs(10).unwrap()),
+		})
+		.unwrap();
+	frame.write(fragment).unwrap();
+	frame.finish().unwrap();
+	group.finish().unwrap();
+	track.finish().unwrap();
+
+	let catalog_stream = crate::catalog::Consumer::<()>::new(&consumer, crate::catalog::CatalogFormat::Hang)
+		.await
+		.expect("catalog consumer");
+	let mut exporter = crate::container::fmp4::Export::new(crate::source::announced(&consumer), catalog_stream)
+		.with_max_delay(RECORDING_MAX_DELAY);
+	let init = chunk_now(&mut exporter).await.init().expect("init");
+	let fragments = drain_now(&mut exporter).await;
+
+	let scale = moq_net::Timescale::new(timescale(&init).into()).unwrap();
+	let presented: Vec<u128> = fragments
+		.into_iter()
+		.flat_map(|fragment| super::decode(fragment.data, None, scale, super::Kind::Video).unwrap())
+		.map(|sample| sample.timestamp.as_micros())
+		.collect();
+	assert_eq!(presented, [10_000_000, 10_066_000, 10_033_000]);
+}
+
+/// The single track's media timescale, from an init segment.
+fn timescale(init: &Bytes) -> u32 {
+	let mut cursor = Cursor::new(init.as_ref());
+	while let Some(atom) = mp4_atom::Any::decode_maybe(&mut cursor).expect("decode init") {
+		if let mp4_atom::Any::Moov(moov) = atom {
+			return moov.trak[0].mdia.mdhd.timescale;
+		}
+	}
+	panic!("no moov");
 }
 
 /// The catalog codec string and dimensions are enough, so the init is written
