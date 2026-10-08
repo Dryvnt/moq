@@ -22,7 +22,8 @@ restart at the same path reaches a lingering copy unannounced. A publisher
 that restarts its group sequence under the same name is buggy, and this makes
 that bug visible instead of a silent stall. A change of route can't cause
 it: every route change, including a per-path winner change under a prefix
-pool, reaches downstream as a `Restart` that unsets the cached copy
+pool, reaches downstream as a `Restart` of the route, which unsets the cached
+copy of every broadcast nested under it
 (maintainer, 2026-10-08, in [Restart](/quest/m0/broadcast-epoch/restart.md)).
 Only a restart behind an unchanged route reaches a copy unannounced.
 

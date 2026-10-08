@@ -36,7 +36,8 @@ Decisions (2026-10-07, proposed for the maintainer):
 - A front adopts the epoch it learns. Routes without an epoch never splice
   (maintainer, 2026-10-08, in [Restart](/quest/m0/broadcast-epoch/restart.md)):
   a route change, including a per-path winner change under a prefix pool,
-  reaches downstream as a `Restart` that unsets the cached copy. What that
+  reaches downstream as a `Restart` of the route, which unsets the cached
+  copy of every broadcast nested under it. What that
   can't see is a worker restarting an output under the same claim route;
   there the learned epoch is what a downstream copy names on re-subscribe,
   and a mismatch is refused.
