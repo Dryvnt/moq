@@ -218,6 +218,49 @@ describe.each([Version.DRAFT_05, Version.DRAFT_06, Version.DRAFT_07])("%s", (ver
 		origin.close();
 	});
 
+	test("a TRACK stream after the cached lookup was let go holds the track again", async () => {
+		const pair = createMockTransportPair(ALPN_05);
+		const origin = new OriginProducer();
+		const publisher = new Publisher(pair.server, version, randomHop(), origin.consume());
+		const broadcast = origin.createBroadcast(Path.from("room"));
+		broadcast.announce();
+		const demand = broadcast.demand();
+		let requests = 0;
+		const serving = (async () => {
+			for (;;) {
+				const request = await wireOf(broadcast).requested();
+				if (!request) return;
+				requests++;
+				request.accept({ timescale: Timescale.MILLI });
+			}
+		})();
+
+		const open = async () => {
+			const client = await Stream.open(pair.client, { version });
+			const server = await Stream.accept(pair.server, version);
+			if (!server) throw new Error("the publisher never accepted the TRACK stream");
+			void publisher.runTrackInfo(new TrackMessage(Path.from("room"), "video"), server);
+			return client;
+		};
+		const first = await open();
+		await TrackInfo.decode(first.reader, version);
+		first.writer.close();
+		expect(await settlesWithin(demand.unused(), 1000)).toBe(true);
+
+		const second = await open();
+		await TrackInfo.decode(second.reader, version);
+		expect(requests).toBe(2);
+		expect(await settlesWithin(demand.unused(), 50)).toBe(false);
+
+		second.writer.close();
+		expect(await settlesWithin(demand.unused(), 1000)).toBe(true);
+
+		publisher.close();
+		broadcast.close();
+		await serving;
+		origin.close();
+	});
+
 	test("a TRACK stream joins a pending lookup that every earlier TRACK stream left", async () => {
 		const pair = createMockTransportPair(ALPN_05);
 		const origin = new OriginProducer();

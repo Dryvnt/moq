@@ -1037,8 +1037,8 @@ export class Publisher {
 	// fixed for the track's lifetime. Rejects if the track is unavailable. Each `hold`
 	// keeps the request wanted until it aborts, so one TRACK stream closing never lets it
 	// go under another. A pending request is wanted anyway, so a TRACK stream arriving
-	// before the answer joins it even if every earlier one left; once let go, a cached
-	// answer holds nothing.
+	// before the answer joins it even if every earlier one left. Once let go, the cached
+	// answer still serves a FETCH, but a TRACK stream asks again, since it is interest.
 	#resolveTrackInfo(front: broadcast.Consumer, track: string, hold?: AbortSignal): Promise<TrackInfoMessage> {
 		let tracks = this.#trackInfo.get(front);
 		if (!tracks) {
@@ -1046,8 +1046,9 @@ export class Publisher {
 			this.#trackInfo.set(front, tracks);
 		}
 
+		const holding = hold?.aborted === false ? hold : undefined;
 		let entry = tracks.get(track);
-		if (!entry) {
+		if (!entry || (holding && entry.release.signal.aborted)) {
 			const release = new AbortController();
 			const info = (async () => {
 				const info = await wireOf(front).resolveTrackInfo(track, release.signal);
@@ -1076,10 +1077,10 @@ export class Publisher {
 			tracks.set(track, entry);
 		}
 
-		if (hold && !hold.aborted && !entry.release.signal.aborted) {
+		if (holding) {
 			const held = entry;
 			held.holders++;
-			hold.addEventListener(
+			holding.addEventListener(
 				"abort",
 				() => {
 					if (--held.holders === 0 && held.answered) held.release.abort();
