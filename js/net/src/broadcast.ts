@@ -94,6 +94,8 @@ function watchDemand(state: BroadcastState, producer: track.Producer, lookups?: 
 	const cleanup = () => {
 		disposeUsed();
 		disposeClosed();
+		// A removed track keeps its lookups, so a hold ending later must not count it again.
+		if (lookups?.changed === update) lookups.changed = () => {};
 		if (active) {
 			state.active--;
 			active = false;

@@ -218,6 +218,35 @@ test("a held info lookup on an inserted track counts as demand until it lets go"
 	broadcast.close();
 });
 
+test("a held info lookup ending after removeTrack leaves demand alone", async () => {
+	const broadcast = new BroadcastProducer();
+	const demand = broadcast.demand();
+	const track = broadcast.createTrack("media", { timescale: Timescale.MILLI });
+	const subscriber = track.subscribe();
+	const hold = new AbortController();
+	await wireOf(broadcast).resolveTrackInfo("media", hold.signal);
+	expect(demand.used.peek()).toBe(true);
+
+	broadcast.removeTrack("media");
+	expect(demand.used.peek()).toBe(false);
+	hold.abort();
+	expect(demand.used.peek()).toBe(false);
+	subscriber.close();
+	await Promise.resolve();
+	expect(demand.used.peek()).toBe(false);
+
+	// Re-inserting the track counts it again.
+	broadcast.insertTrack(track);
+	expect(demand.used.peek()).toBe(false);
+	const resubscriber = track.subscribe();
+	await Promise.resolve();
+	expect(demand.used.peek()).toBe(true);
+
+	resubscriber.close();
+	track.close();
+	broadcast.close();
+});
+
 test("removeTrack leaves a track that only a request serves", async () => {
 	const broadcast = new BroadcastProducer();
 	const demand = broadcast.demand();
