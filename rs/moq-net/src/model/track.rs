@@ -2681,10 +2681,10 @@ pub(crate) enum DemandState {
 
 /// A handle to a single track within a broadcast.
 ///
-/// Obtained from [`broadcast::Consumer::track`]. Holding it sends nothing
-/// to the publisher; it just names a track you can [`subscribe`](Self::subscribe)
-/// to (a live, ongoing stream of groups) later. The same handle can be subscribed
-/// to multiple times, and clones are cheap.
+/// Obtained from [`broadcast::Consumer::track`]. Holding it counts toward the
+/// track's [`Demand`], but delivers nothing until you [`subscribe`](Self::subscribe)
+/// to it (a live, ongoing stream of groups). The same handle can be subscribed to
+/// multiple times, and clones are cheap.
 #[derive(Clone)]
 pub struct Consumer {
 	name: Arc<str>,
