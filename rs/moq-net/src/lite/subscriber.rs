@@ -4144,11 +4144,13 @@ impl<S: crate::transport::poll::Session> kio::Task for TrackServeRun<S> {
 					let res = ready!(info.poll_fetch(&self.serve, waiter));
 					let request = request.take().expect("request pending");
 					match res {
-						Ok(info) => {
+						Ok((info, held)) => {
 							// Lite05 carries per-frame timestamps on the wire at this scale;
 							// `Some` tells the ingest to decode them.
 							let timescale = info.timescale;
-							self.state = TrackRunState::Serve(ServeLoop::new(&self.serve, request, info, timescale));
+							let mut serve_loop = ServeLoop::new(&self.serve, request, info, timescale);
+							serve_loop.held = Some(held);
+							self.state = TrackRunState::Serve(serve_loop);
 						}
 						Err(err) => {
 							tracing::warn!(broadcast = %self.serve.subscriber.log_path(&self.serve.path), track = %self.serve.name, %err, "track info failed");
@@ -4226,7 +4228,8 @@ impl<S: crate::transport::poll::Session> Drop for TrackServeRun<S> {
 }
 
 /// Opens a TRACK stream, reads the single TRACK_INFO, and maps it to the
-/// model's [`track::Info`]. Lite05+ only. Bails if the session dies meanwhile.
+/// model's [`track::Info`], handing back the stream to hold. Lite05+ only. Bails if the
+/// session dies meanwhile.
 struct TrackInfoFetch<S: crate::transport::poll::Session> {
 	session: S,
 	// A dedicated close-watch handle for the read.
@@ -4250,7 +4253,11 @@ impl<S: crate::transport::poll::Session> TrackInfoFetch<S> {
 		}
 	}
 
-	fn poll_fetch(&mut self, serve: &TrackServe<S>, waiter: &kio::Waiter) -> Poll<Result<track::Info, Error>> {
+	fn poll_fetch(
+		&mut self,
+		serve: &TrackServe<S>,
+		waiter: &kio::Waiter,
+	) -> Poll<Result<(track::Info, HeldTrack<S>), Error>> {
 		let mut cx = waiter.context();
 		loop {
 			match &mut self.state {
@@ -4277,9 +4284,10 @@ impl<S: crate::transport::poll::Session> TrackInfoFetch<S> {
 						return Poll::Ready(Err(Error::from_transport(err)));
 					}
 					let info = ready!(stream.reader.poll_decode::<lite::TrackInfo>(&mut cx))?;
-					// The publisher FINs after TRACK_INFO; FIN our side too and let the
-					// stream drop.
-					let _ = stream.writer.finish();
+					let TrackInfoState::Read { stream } = std::mem::replace(&mut self.state, TrackInfoState::Open)
+					else {
+						unreachable!()
+					};
 
 					// Publisher Max Age rides on the wire, so the local retention
 					// window matches what the upstream advertises (relays re-serve with
@@ -4289,10 +4297,22 @@ impl<S: crate::transport::poll::Session> TrackInfoFetch<S> {
 						.with_timescale(info.timescale)
 						.with_max_age(info.max_age)
 						.with_priority(info.priority);
-					return Poll::Ready(Ok(model));
+					return Poll::Ready(Ok((model, HeldTrack(stream))));
 				}
 			}
 		}
+	}
+}
+
+/// An answered TRACK stream, kept open as interest in the track: the publisher holds the
+/// track for us until we FIN it, which dropping this does. Held until the SUBSCRIBE that
+/// follows has its first response, or until nobody wants this copy, so demand never
+/// lapses between the two streams at any hop.
+struct HeldTrack<S: crate::transport::poll::Session>(Stream<S, Version>);
+
+impl<S: crate::transport::poll::Session> Drop for HeldTrack<S> {
+	fn drop(&mut self) {
+		let _ = self.0.writer.finish();
 	}
 }
 
@@ -4323,6 +4343,9 @@ struct ServeLoop<S: crate::transport::poll::Session> {
 	/// Armed while nobody holds the copy: it stays, cache and all, for a returning
 	/// reader until this fires.
 	linger: crate::time::Deadline,
+	/// The TRACK stream that answered, until a SUBSCRIBE has a response or nobody holds
+	/// the copy.
+	held: Option<HeldTrack<S>>,
 }
 
 // A state machine's enum is its storage: one transient instance per stream, so the
@@ -4370,6 +4393,7 @@ impl<S: crate::transport::poll::Session> ServeLoop<S> {
 			timescale,
 			mode: ServeMode::Select,
 			linger: crate::time::Deadline::new(&serve.subscriber.runtime),
+			held: None,
 		}
 	}
 
@@ -4478,6 +4502,7 @@ impl<S: crate::transport::poll::Session> ServeLoop<S> {
 					// reader or fetch that asks again soon, then is dropped. In-flight
 					// fetches keep it alive: work already accepted still gets finished.
 					if self.fetches.is_empty() && self.demand.poll_unused(waiter).is_ready() {
+						self.held = None;
 						if self.linger.deadline().is_none() {
 							let now = serve.subscriber.runtime.now();
 							self.linger.set(now.checked_add(track::IDLE_LINGER));
@@ -4499,6 +4524,11 @@ impl<S: crate::transport::poll::Session> ServeLoop<S> {
 							.reader
 							.poll_decode_maybe::<lite::SubscribeResponse>(&mut cx)
 					{
+						// The publisher answered the SUBSCRIBE, so its demand stands on the
+						// subscription now. A bare `track::Consumer` still held after that
+						// subscription ends keeps local `Demand` used while the publisher sees
+						// unused: accepted, since nothing holds a handle that way.
+						self.held = None;
 						match res {
 							Ok(Some(msg)) => {
 								match &msg {
