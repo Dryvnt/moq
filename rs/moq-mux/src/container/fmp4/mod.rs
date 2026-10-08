@@ -316,6 +316,11 @@ impl Wire {
 		&self.trak
 	}
 
+	/// The media timescale, which a CMAF track must count in.
+	pub(crate) fn timescale(&self) -> Result<moq_net::Timescale> {
+		Ok(moq_net::Timescale::new(self.trak.mdia.mdhd.timescale as u64)?)
+	}
+
 	/// The media kind declared by the track handler.
 	fn kind(&self) -> Result<Kind> {
 		Kind::from_handler(self.trak.mdia.hdlr.handler)
@@ -334,7 +339,7 @@ impl Container for Wire {
 	type Error = Error;
 
 	fn write(&self, group: &mut moq_net::group::Producer, frames: &[Frame]) -> std::result::Result<(), Self::Error> {
-		let timescale = moq_net::Timescale::new(self.trak.mdia.mdhd.timescale as u64)?;
+		let timescale = self.timescale()?;
 		if group.timescale() != Some(timescale) {
 			return Err(Error::TimescaleMismatch {
 				track: group.timescale(),
@@ -365,7 +370,7 @@ impl Container for Wire {
 			return Poll::Ready(Ok(None));
 		};
 
-		let timescale = moq_net::Timescale::new(self.trak.mdia.mdhd.timescale as u64)?;
+		let timescale = self.timescale()?;
 		Poll::Ready(Ok(Some(decode(
 			frame.payload,
 			frame.timestamp,
