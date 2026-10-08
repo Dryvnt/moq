@@ -1660,6 +1660,9 @@ where
 				None => continue,
 			};
 			let source = crate::model::broadcast::SourceGuard::new(self.origin.create_source(&requested));
+			// The handler exists before the requester sees the source, so a track it asks
+			// for before `run_broadcast` first polls queues instead of failing `NotFound`.
+			let dynamic = source.dynamic();
 			request.accept(&*source);
 
 			// The namespace's token closes the source as it is retracted. If it was
@@ -1677,7 +1680,7 @@ where
 
 			let this = self.clone();
 			broadcasts.push(async move {
-				if let Err(err) = this.run_broadcast(requested.borrow(), source, route).await {
+				if let Err(err) = this.run_broadcast(requested.borrow(), source, dynamic, route).await {
 					tracing::debug!(%err, "error running broadcast");
 				}
 			});
@@ -1699,15 +1702,16 @@ where
 		let _ = entry.dynamic.update(entry.route.clone());
 	}
 
-	/// Serve one minted source's track requests until it closes: its namespace is
-	/// retracted (`route` closes), nothing holds it any more, or the session dies.
+	/// Serve one minted source's track requests, taken through its `broadcast` handler,
+	/// until it closes: its namespace is retracted (`route` closes), nothing holds it any
+	/// more, or the session dies.
 	async fn run_broadcast(
 		&self,
 		path: Path<'_>,
 		source: crate::model::broadcast::SourceGuard,
+		mut broadcast: broadcast::Dynamic,
 		route: Option<kio::Consumer<()>>,
 	) -> Result<(), Error> {
-		let mut broadcast = source.dynamic();
 		let mut subscribes = TaskSet::owned();
 		let mut closed_session = self.session.clone();
 		loop {
@@ -6108,10 +6112,10 @@ mod tests {
 		let (subscriber, origin) = cluster_subscriber(crate::Hop::new(1).unwrap());
 		let run = |route: &kio::Producer<()>| {
 			let source = crate::model::broadcast::SourceGuard::new(origin.create_source("pool/p"));
-			let holder = source.consume();
+			let (holder, dynamic) = (source.consume(), source.dynamic());
 			let (this, route) = (subscriber.clone(), route.consume());
 			let task = moq_net_sim::spawn(async move {
-				this.run_broadcast(crate::Path::new("pool/p"), source, Some(route))
+				this.run_broadcast(crate::Path::new("pool/p"), source, dynamic, Some(route))
 					.await
 			});
 			(holder, task)

@@ -1419,6 +1419,8 @@ struct MintedSource {
 	/// The publisher instance the route announced, asked for on every request.
 	epoch: Option<crate::Epoch>,
 	source: crate::model::broadcast::SourceGuard,
+	/// The source's track handler, registered before its requester could ask for a track.
+	dynamic: crate::broadcast::Dynamic,
 	/// Closes when the route that minted the source goes.
 	route: kio::Consumer<()>,
 }
@@ -1449,8 +1451,8 @@ impl<S: crate::transport::poll::Session> SourceServe<S> {
 			subscriber,
 			path: minted.path,
 			epoch: minted.epoch,
-			dynamic: minted.source.dynamic(),
 			source: minted.source,
+			dynamic: minted.dynamic,
 			route: minted.route,
 			closed,
 			tracks: kio::Tasks::new(),
@@ -2731,6 +2733,56 @@ mod tests {
 		assert!(kio::Task::poll(&mut serve, &kio::Waiter::noop()).is_ready());
 	}
 
+	/// A track read before the minted source's serve machine first runs queues for that
+	/// machine, rather than the front finding no handler and ending the track `NotFound`.
+	#[moq_net_sim::test]
+	async fn a_track_read_before_its_source_is_served_queues() {
+		let origin = origin::Config::new(crate::Hop::new(1).unwrap()).produce();
+		let mut subscriber = Subscriber::new(SubscriberConfig {
+			runtime: crate::time::Clock::sim(),
+			session: SinkSession::new(Default::default()),
+			origin: origin.clone(),
+			recv_bandwidth: None,
+			version: VERSION,
+			peer_setup: Default::default(),
+			cost: None,
+			peer_hop: Some(crate::Hop::new(777).unwrap()),
+			going_away: Default::default(),
+		});
+		let mut announced = Announced::default();
+		subscriber
+			.start_announce(
+				Path::new("pool").to_owned(),
+				None,
+				crate::Hops::new(),
+				crate::origin::Cost::default(),
+				0,
+				None,
+				&mut announced,
+			)
+			.unwrap();
+		announced.poll_serve(&subscriber, &kio::Waiter::noop());
+
+		let consumer = origin.consume();
+		let request = moq_net_sim::spawn(async move { consumer.request_broadcast("pool/p", None).await });
+		let ready = kio::wait(|waiter| announced.ready.poll_pop(waiter)).await.unwrap();
+		announced.ready.try_push(ready).unwrap();
+		announced.poll_serve(&subscriber, &kio::Waiter::noop());
+		let resolved = request.await.unwrap().expect("resolves");
+
+		// The front asks the source for the track while its serve machine is still queued.
+		let track = resolved.track("video").unwrap();
+		let _subscribing = track.subscribe(None);
+		moq_net_sim::sleep(std::time::Duration::from_millis(1)).await;
+
+		let minted = subscriber.sources.try_pop().unwrap().expect("a source was minted");
+		let mut serve = SourceServe::new(subscriber.clone(), minted);
+		match serve.dynamic.poll_requested_track(&kio::Waiter::noop()) {
+			Poll::Ready(Ok(request)) => assert_eq!(request.name(), "video"),
+			other => panic!("the track never queued for the source: {:?}", other.map(|r| r.err())),
+		}
+	}
+
 	/// Every path out of `start_announce` that declines an announce records it first.
 	///
 	/// The decline paths are a list one edit can fall off the end of, and a miss is silent:
@@ -3539,13 +3591,17 @@ impl Announced {
 				};
 				let path = path.to_owned();
 				let source = subscriber.origin.create_source(&path);
-				// Accepted first, so the requester holds the source before its serve
-				// machine can see it unheld.
+				// The handler exists before the requester sees the source, so a track it
+				// asks for before the serve machine first runs queues instead of failing
+				// `NotFound`. Accepted before the push, so the requester holds the source
+				// before its serve machine can see it unheld.
+				let dynamic = source.dynamic();
 				request.accept(&source);
 				let _ = subscriber.sources.try_push(MintedSource {
 					path,
 					epoch: entry.route.epoch.clone(),
 					source: crate::model::broadcast::SourceGuard::new(source),
+					dynamic,
 					route: entry.live.consume(),
 				});
 			}
