@@ -33,11 +33,13 @@ Decisions (2026-10-07, proposed for the maintainer):
 - The epoch lives on the broadcast, since a broadcast is an instance, and
   `Request::accept` reads it from the accepted broadcast rather than taking
   it as an argument.
-- A front adopts the epoch it learns. Restart's join rule (a request joins a
-  front only while its route still wins) can land a downstream relay's
-  lingering copy on another worker under its cached track, since the
-  upstream relay's per-path winner moves without the downstream claim route
-  changing. With the epoch, the copy names it and is refused on a mismatch.
+- A front adopts the epoch it learns. Routes without an epoch never splice
+  (maintainer, 2026-10-08): a route change reaches every downstream
+  subscriber, relays included, as a `Restart` (or END then START), which
+  drops the old copy for a fresh subscription, and only an identical epoch
+  resumes ([Restart](/quest/m0/broadcast-epoch/restart.md)). What that can't
+  see is a worker restarting an output under the same claim route; there the
+  learned epoch is what a downstream copy names, and a mismatch is refused.
 - A refusal of a front's learned epoch means that instance is gone: the front
   ends, and a request that joined it re-resolves onto a fresh front (a new
   TRACK_INFO exchange) instead of failing. Only readers the old instance was
