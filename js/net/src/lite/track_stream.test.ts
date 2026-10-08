@@ -33,7 +33,10 @@ describe.each([Version.DRAFT_05, Version.DRAFT_06, Version.DRAFT_07])("%s", (ver
 	async function subscribing() {
 		const pair = createMockTransportPair(ALPN_05);
 		const subscriber = new Subscriber(pair.client, version, randomHop());
-		const reader = subscriber.consume(Path.from("room")).track("video").subscribe({ maxDelay: Milli(100) });
+		const reader = subscriber
+			.consume(Path.from("room"))
+			.track("video")
+			.subscribe({ maxDelay: Milli(100) });
 
 		const track = await Stream.accept(pair.server, version);
 		if (!track) throw new Error("the subscriber never asked for TRACK_INFO");

@@ -1185,7 +1185,13 @@ impl<S: crate::transport::poll::Session, R: Request<S>> RequestServe<S, R> {
 					let closed = ready!(self.poll_requester(&mut cx));
 					// Let go of the request now, not when the serve is dropped.
 					self.state = RequestState::Finish { finished: true };
-					closed?;
+					// A FIN or a reset both end the requester's interest; only a stray byte
+					// is a fault.
+					if let Err(err) = closed
+						&& !is_cancel(&err)
+					{
+						return Poll::Ready(Err(err));
+					}
 					if delivered {
 						return Poll::Ready(Ok(()));
 					}
