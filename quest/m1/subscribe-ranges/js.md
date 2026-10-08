@@ -24,6 +24,12 @@ IETF FETCH dispatch. Resized from [M] to [L] for it.
   Storage, retention, and media catalog interpretation stay outside `js/net`.
 - One logical dynamic track per broadcast and name: a cache-miss request
   never creates a duplicate live producer.
+- A lite TRACK's info request and the SUBSCRIBE that follows it are one
+  request. The publisher holds the info request until the SUBSCRIBE's first
+  response (TRACK stream demand, #5053), so the SUBSCRIBE joins it; today
+  `resolveTrackInfo` and `subscribe` in `js/net/src/broadcast.ts` each queue
+  their own. Test one request per viewer. Decided 2026-10-08: no separate
+  quest, since no app can pull per-track requests until this surface exists.
 - Verify with an in-memory responder, without OPFS or an archive writer: a
   browser publisher serves a native subscriber after a group is evicted or
   was never cached, covering exact replay, empty and missing groups,

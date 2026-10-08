@@ -28,6 +28,13 @@ edge, which embeds moq-relay; it moved there on 2026-09-28.
 Pools of claim workers (transcoders) also need the relay to forget a front
 nobody reads, and demand that doesn't flap on a viewer's first subscribe
 (both found 2026-10-07).
+A demand poll that loses a reader's wake keeps an unread front and its
+upstream subscription alive, so it ships with them (found 2026-10-08).
+
+Interop coverage: Go and Python publishers fall silent until the relay's 10 s
+idle timeout drops them, which fails the browser cells and hides as slow
+passes elsewhere. It moved here from m1 on 2026-10-08 because it masks
+interop on every wire PR.
 
 Interop: Fastly's moq-relay-interop report (run of 2026-09-23, build
 7ee2b02) was triaged against `main` on 2026-10-07. Its SETUP, UNSUBSCRIBE
@@ -62,6 +69,8 @@ a published `@moq/watch` break.
 - [TRACK stream demand](/quest/m0/track-stream-demand.md) - a lite-05+ subscribe shows the publisher one `used` edge, not a flap between TRACK and SUBSCRIBE
 - [Idle fronts](/quest/m0/idle-fronts.md) - a front nobody has read for the linger ends with its per-path state, so a standing claim stops accumulating fronts and sources
 - [Upstream position regression](/quest/m0/largest-regression.md) - a relay copy that sees upstream's largest group go backwards ends instead of serving the old instance's cache
+- [Demand lost wake](/quest/m0/demand-lost-wake.md) - a reader that comes and goes between a demand poll and its re-read never leaves a front or `broadcast::Demand` without a wake
+- [FFI publisher stall](/quest/m0/ffi-publisher-stall.md) - Go and Python publishers stay connected through every interop cell, and a cell fails when a connection idles out
 - [qmux credit](/quest/m0/qmux-credit.md) - qmux returns connection credit for dropped and stopped streams and delivers its close frame, on both lines
 - [web-transport releases the qmux fixes](/quest/m0/qmux-credit-upstream.md) - waiting on moq-dev/web-transport#412 and #413 to merge and ship, which qmux credit bumps to
 - [Broadcast epochs](/quest/m0/broadcast-epoch/README.md) - every first-party publisher that can restart mints a fresh route epoch, the newest wins a path, and only routes with the same epoch resume a subscription
