@@ -80,7 +80,9 @@ interface TrackInfoEntry {
 	info: Promise<TrackInfoMessage>;
 	/** The open TRACK streams holding the request. */
 	holders: number;
-	/** Lets the request go, once its last holder closes. */
+	/** Whether the application answered. Until then the request stays wanted, so a TRACK stream can join it. */
+	answered: boolean;
+	/** Lets the request go, once it is answered and its last holder has closed. */
 	release: AbortController;
 }
 
@@ -1034,7 +1036,9 @@ export class Publisher {
 	// only the immutable properties are needed (not the groups). Cached because they're
 	// fixed for the track's lifetime. Rejects if the track is unavailable. Each `hold`
 	// keeps the request wanted until it aborts, so one TRACK stream closing never lets it
-	// go under another; once let go, a cached answer holds nothing.
+	// go under another. A pending request is wanted anyway, so a TRACK stream arriving
+	// before the answer joins it even if every earlier one left; once let go, a cached
+	// answer holds nothing.
 	#resolveTrackInfo(front: broadcast.Consumer, track: string, hold?: AbortSignal): Promise<TrackInfoMessage> {
 		let tracks = this.#trackInfo.get(front);
 		if (!tracks) {
@@ -1058,11 +1062,12 @@ export class Publisher {
 				});
 			})();
 
-			entry = { info, holders: 0, release };
+			entry = { info, holders: 0, answered: false, release };
 			const created = entry;
 			info.then(
-				// Nothing held the request while it resolved (a FETCH's lookup), so let it go.
+				// Nothing holds the request now (a FETCH's lookup, or every TRACK stream left), so let it go.
 				() => {
+					created.answered = true;
 					if (created.holders === 0) release.abort();
 				},
 				// Don't poison the cache on failure: a later request may succeed.
@@ -1077,7 +1082,7 @@ export class Publisher {
 			hold.addEventListener(
 				"abort",
 				() => {
-					if (--held.holders === 0) held.release.abort();
+					if (--held.holders === 0 && held.answered) held.release.abort();
 				},
 				{ once: true },
 			);

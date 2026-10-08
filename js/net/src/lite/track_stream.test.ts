@@ -217,4 +217,42 @@ describe.each([Version.DRAFT_05, Version.DRAFT_06, Version.DRAFT_07])("%s", (ver
 		await serving;
 		origin.close();
 	});
+
+	test("a TRACK stream joins a pending lookup that every earlier TRACK stream left", async () => {
+		const pair = createMockTransportPair(ALPN_05);
+		const origin = new OriginProducer();
+		const publisher = new Publisher(pair.server, version, randomHop(), origin.consume());
+		const broadcast = origin.createBroadcast(Path.from("room"));
+		broadcast.announce();
+		const demand = broadcast.demand();
+		// Answered by hand, after the first TRACK stream has left.
+		const requested = wireOf(broadcast).requested();
+
+		const open = async () => {
+			const client = await Stream.open(pair.client, { version });
+			const server = await Stream.accept(pair.server, version);
+			if (!server) throw new Error("the publisher never accepted the TRACK stream");
+			void publisher.runTrackInfo(new TrackMessage(Path.from("room"), "video"), server);
+			return { client, server };
+		};
+		const first = await open();
+		const request = await requested;
+		if (!request) throw new Error("the publisher never asked for the track");
+		first.client.writer.reset(new Error("gone"));
+		await first.server.reader.closed.catch(() => {});
+		// Let the publisher see the reset before the next TRACK stream arrives.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		const second = await open();
+		request.accept({ timescale: Timescale.MILLI });
+		await TrackInfo.decode(second.client.reader, version);
+		expect(await settlesWithin(demand.unused(), 50)).toBe(false);
+
+		second.client.writer.close();
+		expect(await settlesWithin(demand.unused(), 1000)).toBe(true);
+
+		publisher.close();
+		broadcast.close();
+		origin.close();
+	});
 });
