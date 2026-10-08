@@ -50,15 +50,21 @@ Pitfalls:
   and its front never retires. After that it is no edge, or an ended unused
   track spins.
 - `broadcast::Demand` has no handler to poll again: publishers await
-  `poll_demand` directly, so the retry lives inside the poll, re-registering
-  while a track was `Ready` but the aggregate is unmet.
+  `poll_demand` directly, so the fix lives inside the poll. Prefer deciding
+  from the per-track poll results over re-reading `is_used()`: every track
+  `Ready` meets `unused`, any `Ready(Ok)` meets `used`, and otherwise the
+  tracks in the way hold registrations. Never retry just because a track was
+  `Ready`: with one track unused and another still read, that spins until
+  the last viewer leaves.
 
 Verification: a loom model beside Idle fronts'
 `a_request_never_joins_a_retiring_front` in `rs/moq-net/tests/loom.rs`, with
 a reader thread taking and dropping a track around the driver's poll, failing
 without the fix; the same for `Demand`. Also cover a track that closes while
-used (one `Unused`) and one that closes already unused (no spin). The
-simulated network can't hit a window inside a single poll.
+used (one `Unused`) and one that closes already unused (no spin), and for
+`Demand` two tracks: `Pending` while only one is read, done once its last
+reader leaves. The simulated network can't hit a window inside a single
+poll.
 
 Public API: none. Wire: none.
 
