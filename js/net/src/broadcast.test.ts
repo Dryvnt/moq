@@ -159,6 +159,30 @@ test("an info lookup releases a request nobody subscribed to", async () => {
 	broadcast.close();
 });
 
+test("held info lookups keep a request until the last one lets go", async () => {
+	const broadcast = new BroadcastProducer();
+	const demand = broadcast.demand();
+	const pulled = wireOf(broadcast).requested();
+	const first = new AbortController();
+	const opened = wireOf(broadcast).resolveTrackInfo("media", first.signal);
+	const request = await pulled;
+	if (!request) throw new Error("expected request");
+	const producer = request.accept();
+	const second = new AbortController();
+	await wireOf(broadcast).resolveTrackInfo("media", second.signal);
+	await opened;
+
+	// The lookup that opened the request lets go first, under the one still holding it.
+	first.abort();
+	expect(producer.closed.peek()).toBeUndefined();
+	expect(demand.used.peek()).toBe(true);
+
+	second.abort();
+	expect(producer.closed.peek()).toBeDefined();
+	expect(demand.used.peek()).toBe(false);
+	broadcast.close();
+});
+
 test("closing a broadcast rejects a dequeued request", async () => {
 	const broadcast = new BroadcastProducer();
 	const pulled = wireOf(broadcast).requested();
