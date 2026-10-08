@@ -37,5 +37,4 @@ Public API: none. Wire: none.
 
 ## Related
 
-- [fMP4 init from the catalog](/quest/m1/fmp4-catalog-init.md) - #5015, the same fMP4 module; whichever lands second rebases
 - [Export sync flags](/quest/m2/intra-refresh/export-sync-flags.md) - the export side of the same flags
