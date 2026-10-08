@@ -76,7 +76,10 @@ its first group, with nothing stale. A worker answering with a per-output
 epoch serves its first viewer without a cut. A worker closing a path while
 it is read sends the re-request to the cheaper worker as a new instance. A
 request joining an unread front whose worker restarted its output reaches the
-new instance without an error.
+new instance without an error. A lite-06 or IETF viewer behind a lite-07
+worker-to-relay path, with the old instance's groups still cached, receives
+only the new instance's groups after the worker restarts the output with a
+new epoch.
 `just test interop --all`.
 
 Public API: Rust and JS, the broadcast's epoch and what `accept` does with

@@ -43,7 +43,11 @@ Decisions (2026-10-07):
 - A held TRACK stream is demand without a subscription, so it counts against
   the per-session subscription cap from
   [Request caps](/quest/m0/request-caps.md); a peer can't hold more interest
-  than it could by subscribing.
+  than it could by subscribing. A held TRACK and the SUBSCRIBE for the same
+  track on the same session share one slot: the SUBSCRIBE takes over the
+  TRACK's reservation instead of needing a second, so a session at the cap
+  can still turn its held TRACKs into subscriptions (decided 2026-10-08 from
+  review).
 - Not pipelining TRACK and SUBSCRIBE, which the draft already allows: it
   still races, and every hop would have to buffer frames until TRACK_INFO.
 - Consumers never debounce demand; the docs promise clean edges.
@@ -55,8 +59,9 @@ latency) asserting exactly one `used` edge and no `unused` while the reader
 stays subscribed, on lite-05, 06, and 07, direct and through one relay. It
 fails on `main` today. The relay case controls the ordering so the
 downstream TRACK FIN is handled before its SUBSCRIBE. A boundary test fills
-the per-session subscription cap with held TRACK streams and checks the next
-one is refused. JS counterparts for the JS side.
+the per-session subscription cap with held TRACK streams, turns each into a
+live SUBSCRIBE with no `unused` edge, and checks that one more TRACK is
+refused. JS counterparts for the JS side.
 
 Public API: none. Wire: semantics only (holding the TRACK stream open), no new
 fields.
