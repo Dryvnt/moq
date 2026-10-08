@@ -16,7 +16,7 @@ lite-05 and 06 can't tell, and keep waiting on the floor.
 
 ## Plan
 
-Found while scoping [Idle fronts](/quest/m0/idle-fronts.md) (2026-10-07):
+Found while scoping idle fronts (2026-10-07):
 under a prefix claim the relay never sees the worker close a broadcast, so a
 restart at the same path reaches a lingering copy unannounced. A publisher
 that restarts its group sequence under the same name is buggy, and this makes
@@ -33,6 +33,13 @@ waiting as today. The copy ends only when the answer comes from the route it
 was last served from without an epoch, where no cross-route resume happens,
 or names a different epoch than the copy holds. Check for any other
 legitimate case before relying on that split.
+
+Whatever ends a front, it leaves the origin's front table before its broadcast
+closes or anything fails, and `request()` treats a front whose broadcast closed
+as gone. So a reader re-requesting after seeing the front's end mints a fresh
+front. The copy's error must reach readers through that end, not an `Abort`
+ahead of it, or a re-request can still join the old front. A request that
+joined before the front decided to end is in flight, like a subscription.
 
 Verification: mocked time, a publisher restarting a path at group 0 within
 the linger. The returning reader gets an error and then the new instance from
