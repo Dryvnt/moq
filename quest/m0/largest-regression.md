@@ -21,10 +21,10 @@ under a prefix claim the relay never sees the worker close a broadcast, so a
 restart at the same path reaches a lingering copy unannounced. A publisher
 that restarts its group sequence under the same name is buggy, and this makes
 that bug visible instead of a silent stall. A change of route can't cause
-it: routes without an epoch never splice, and a `Restart` (or END then
-START) drops every downstream copy, relays included (maintainer, 2026-10-08,
-enforced in [Restart](/quest/m0/broadcast-epoch/restart.md)). Only a restart
-behind an unchanged route reaches a copy unannounced.
+it: every route change, including a per-path winner change under a prefix
+pool, reaches downstream as a `Restart` that unsets the cached copy
+(maintainer, 2026-10-08, in [Restart](/quest/m0/broadcast-epoch/restart.md)).
+Only a restart behind an unchanged route reaches a copy unannounced.
 
 A lower largest group alone doesn't prove a restart: a same-epoch resume onto
 a replica that has fallen behind reports one legitimately, and must keep

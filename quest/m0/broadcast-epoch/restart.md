@@ -25,6 +25,18 @@ decide. A copy resumes or splices only across routes with an
 identical epoch, so the old copy's cached groups never reach a subscriber of
 the new source.
 
+Relays keep caching between subscriptions: a `Restart` is the cache
+invalidation. It unsets the relay's copy for that path, so the next
+subscription goes upstream to the new route (maintainer, 2026-10-08: "a
+Restart unsets the cache; the next subscription goes upstream to the new
+route"). Under a prefix pool the advertised winner is ranked by the prefix
+while requests are ranked by the requested path, so a path can move to
+another worker while the prefix's winner stays. That per-path winner change
+is a source change for the path: the relay emits a `Restart` for it even
+though the prefix winner is unchanged. The restart message must be able to
+name a path below an announced prefix; check how older wires carry that, and
+raise it in the PR if they can't.
+
 ## Plan
 
 Decided in planning (2026-10-07, from #4970's review):
@@ -140,8 +152,11 @@ old route: no `Restart` and new requests stay on the old route until it is
 withdrawn, then `Restart` and a re-request lands on the replacement. With
 mocked time, a lite-06 relay chain where an epochless publisher restarts: the
 downstream relay's cached groups from the old instance never reach a new
-subscriber mixed with the new instance's groups. Run `just drafts check` and
-`just test interop --all`.
+subscriber mixed with the new instance's groups. With mocked time, a prefix
+pool of epoch-less workers behind two relays where one path's winner changes
+under an unchanged prefix winner: the downstream relay gets a `Restart` for
+that path, drops its cached copy, and its next subscribe reaches the new
+route. Run `just drafts check` and `just test interop --all`.
 
 Docs: update `doc/concept/moq-lite.md` (publisher epochs) and
 `doc/lib/{rs,js}` announce sections inline, plus `doc/bin/rtmp.md`,
