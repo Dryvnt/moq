@@ -146,10 +146,6 @@ now fix the mapping, and importers no longer publish verbatim PTS when the
 clock was already taken or set with `Config::with_clock`.
 Wire: none.
 
-## Required
-
-- [CMAF frame timestamp](/quest/m1/cmaf-frame-timestamp.md) - decoders honour an offset frame timestamp on passthrough tracks
-
 ## Related
 
 - [Same-epoch importers](/quest/m1/hop-aligned-import.md) - supplies the input-derived anchor through this quest's API
