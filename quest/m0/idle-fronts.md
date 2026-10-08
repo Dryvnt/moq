@@ -3,14 +3,19 @@
 ## Goal
 
 A relay ends an origin front once nothing has read it for `track::IDLE_LINGER`,
-so the next request for that path resolves by current route cost. Today a
-front lives until its route leaves. Two workers claim a prefix with
-`origin::Producer::dynamic`, a viewer reads path P through a relay and leaves,
-the serving worker closes its output and re-prices its claim to
-`Cost::DRAIN`. Minutes later a new viewer on a new session still gets P from
-the drained worker, while a fresh path under the same claim goes to the cheaper
-one. Done when, after the linger, that viewer gets P from the cheapest claim,
-and the session no longer holds per-path state for P.
+and the per-path state it holds goes with it, so a standing prefix claim
+doesn't keep a front, its driver task, and a session placeholder source for
+every path ever requested under it. Today a front lives until its route
+leaves. Done when, after the linger, the relay holds no front for an unread
+path P and the session no source for it.
+
+Found with a pool of transcode workers claiming one prefix with
+`origin::Producer::dynamic`: a drained worker kept serving a path to new
+viewers through a relay. That routing half is
+[Restart](/quest/m0/broadcast-epoch/restart.md)'s (re-scoped 2026-10-07): a
+request joins a front only while its route still wins, so a drained claim's
+front takes no newcomers. A replaced front still keeps serving its
+subscribers until its route goes, so this quest reclaims it once unread.
 
 Non-goal: a worker that closes an output and serves the same path again
 restarting at group 0. That reuses a name for different content, which is the
@@ -21,9 +26,10 @@ publisher's bug (see Plan).
 Facts from `main` (`rs/moq-net/src/model/origin.rs`, `front.rs`,
 `lite/subscriber.rs`):
 
-- A front resolved without an epoch stays on its first route (`pick`, #4942),
-  and `request()` joins any live front whose epoch matches the best route's,
-  `None == None` here, without asking whether its route is still the best.
+- A front resolved without an epoch stays on its first route (`pick`, #4942).
+  `request()` joins any live front whose epoch matches the best route's until
+  [Restart](/quest/m0/broadcast-epoch/restart.md) lands; after it, a front
+  whose route lost takes no newcomers but stays for its subscribers.
 - Under a claim, the session answers a request with a placeholder source it
   creates on the spot (`poll_serve`), kept in the announced route's sources
   until the claim is withdrawn or the session closes. moq-lite has no message
@@ -68,16 +74,15 @@ Decisions (2026-10-07):
   Document that in `doc/concept/moq-lite.md` Resume: such a worker keeps its
   group sequence going, across its own source restarting too (mirroring an
   upstream sequence that goes back to 0 isn't enough), or gives each output its own epoch once
-  [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) lands, and
-  "a transcoder claim stays on the worker that first served it" holds only
-  while something reads it. Without that, a viewer returning within the
+  [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) lands.
+  Without that, a viewer returning within the
   linger gets the old instance's cached latest group and then nothing until
   the new instance's sequence passes it.
 
 Verification: a relay integration test with two `dynamic` claims on their own
 sessions (mocked time): read P, leave, close the output, drain the serving
-claim, advance past the linger, and check a new session's P comes from the
-other claim and that the first session holds no source for P. A `front.rs`
+claim, advance past the linger, and check that the relay holds no front for P
+and the first session no source for P. A `front.rs`
 unit test for the end condition, including a parked front that must stay,
 and an origin test of a request racing a front's end (like `front.rs`'s
 `a_reader_racing_the_forget_keeps_the_track`, one level up). The front count
@@ -87,7 +92,8 @@ Public API: none expected. Wire: none.
 
 ## Related
 
-- [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) - on lite-07, an unread front re-resolves at once instead of after the linger, and a restarted output is never spliced
+- [Restart](/quest/m0/broadcast-epoch/restart.md) - a request joins a front only while its route still wins, the routing half of the same report
+- [Claim-served epochs](/quest/m0/broadcast-epoch/claim-epochs.md) - on lite-07, a worker's restarted output is a new instance and never spliced
 - [Upstream position regression](/quest/m0/largest-regression.md) - fails loud on the stale splice where the answer shows it
 - [Prefix route fronts](/quest/m0/prefix-route-fronts.md) - bounds how many fronts a prefix route can mint at once; this reclaims idle ones
 - [Front parking](/quest/m1/origin-front-parks.md) - a front waiting for coverage must survive this; the filtered-front leak moved here from it

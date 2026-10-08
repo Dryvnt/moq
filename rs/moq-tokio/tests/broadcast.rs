@@ -154,7 +154,7 @@ async fn lite05_timestamp_roundtrip(scheme: &str) {
 		let payload = format!("frame@{us}").into_bytes();
 		let frame = moq_tokio::moq_net::frame::Info {
 			size: payload.len() as u64,
-			timestamp: Timestamp::new(us, Timescale::MICRO).unwrap(),
+			timestamp: Some(Timestamp::new(us, Timescale::MICRO).unwrap()),
 		};
 		let mut writer = group.create_frame(frame).expect("failed to create frame");
 		writer
@@ -228,7 +228,7 @@ async fn lite05_timestamp_roundtrip(scheme: &str) {
 			.expect("next_frame failed")
 			.expect("group closed prematurely");
 
-		let ts = frame_sub.timestamp;
+		let ts = frame_sub.timestamp.expect("timed frame");
 		assert_eq!(ts.scale(), Timescale::MICRO);
 		assert_eq!(ts.value(), expected_us);
 
@@ -277,7 +277,7 @@ async fn lite05_fetch_roundtrip(scheme: &str) {
 		let payload = format!("frame@{us}").into_bytes();
 		let frame = moq_tokio::moq_net::frame::Info {
 			size: payload.len() as u64,
-			timestamp: Timestamp::new(us, Timescale::MICRO).unwrap(),
+			timestamp: Some(Timestamp::new(us, Timescale::MICRO).unwrap()),
 		};
 		let mut writer = group.create_frame(frame).expect("failed to create frame");
 		writer
@@ -346,7 +346,7 @@ async fn lite05_fetch_roundtrip(scheme: &str) {
 			.expect("next_frame failed")
 			.expect("group closed prematurely");
 
-		let ts = frame_sub.timestamp;
+		let ts = frame_sub.timestamp.expect("timed frame");
 		assert_eq!(ts.scale(), Timescale::MICRO);
 		assert_eq!(ts.value(), expected_us);
 
@@ -524,7 +524,7 @@ async fn lite05_fetch_during_subscribe(scheme: &str) {
 	fn timestamped_frame(us: u64, payload: &str) -> moq_net::frame::Info {
 		moq_net::frame::Info {
 			size: payload.len() as u64,
-			timestamp: Timestamp::new(us, Timescale::MICRO).unwrap(),
+			timestamp: Some(Timestamp::new(us, Timescale::MICRO).unwrap()),
 		}
 	}
 
@@ -730,7 +730,7 @@ async fn broadcast_moq_lite_05_default_timescale() {
 		.expect("next_frame failed")
 		.expect("group closed");
 
-	let ts = frame_sub.timestamp;
+	let ts = frame_sub.timestamp.expect("timed frame");
 	assert_eq!(ts.scale(), Timescale::MILLI, "default timescale is milliseconds");
 
 	drop(connection);
@@ -1120,7 +1120,7 @@ async fn broadcast_route_migration() {
 	// Resolve and subscribe: the cheaper route (A) serves the track.
 	let subscription = moq_net::track::Subscription::default()
 		.with_start(moq_net::track::Position::group(1))
-		.with_max_age(Duration::from_secs(10));
+		.with_max_delay(Duration::from_secs(10));
 	let broadcast = tokio::time::timeout(TIMEOUT, sub_consumer.request_broadcast("test"))
 		.await
 		.expect("request timeout")
@@ -1247,7 +1247,7 @@ async fn rejoin_skips_a_stale_warm_cache(version: &str) {
 		.await
 		.expect("request timeout")
 		.expect("broadcast resolves");
-	let budget = moq_net::track::Subscription::default().with_max_age(Duration::from_millis(100));
+	let budget = moq_net::track::Subscription::default().with_max_delay(Duration::from_millis(100));
 	async fn recv(sub: &mut moq_net::track::Subscriber, version: &str) -> u64 {
 		tokio::time::timeout(TIMEOUT, sub.recv_group())
 			.await

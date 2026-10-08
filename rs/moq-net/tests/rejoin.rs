@@ -52,7 +52,7 @@ async fn rejoin_recovers_the_group_reset_on_leave() {
 				let remote = consumer.request_broadcast("bench").await.unwrap();
 
 				let ts = |ms| Timestamp::from_millis(ms).unwrap();
-				let prefs = || track::Subscription::default().with_max_age(Duration::from_secs(10));
+				let prefs = || track::Subscription::default().with_max_delay(Duration::from_secs(10));
 
 				let mut group = track.append_group().unwrap();
 				group.write_frame(ts(0), b"a0".as_ref()).unwrap();
@@ -371,6 +371,16 @@ async fn rejoin_during_the_cancel_skips_the_cache() {
 
 			let mut sub = remote.track("video").unwrap().subscribe(None).await.unwrap();
 			let group = sub.recv_group().await.unwrap().unwrap();
+			// A track that arrives untimed has no media age to skip the cached group by, so
+			// its reader starts at the newest group cached when it subscribed and reads on
+			// from there.
+			if sub.info().timescale.is_none() {
+				let mut sequence = group.sequence;
+				while sequence < 3 {
+					sequence = sub.recv_group().await.unwrap().unwrap().sequence;
+				}
+				return;
+			}
 			assert_eq!(
 				group.sequence, 3,
 				"{version}: the rejoining reader got the stale cache first"

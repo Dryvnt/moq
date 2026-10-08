@@ -3,11 +3,9 @@
 ## Goal
 
 A broadcast a worker serves in answer to a prefix claim carries its own
-epoch, and a relay learns it from the answer. Three things follow for a pool
+epoch, and a relay learns it from the answer. Two things follow for a pool
 of claim workers (transcoders) behind relays:
 
-- A front nobody reads re-resolves by current cost on the next request,
-  instead of being joined while it still sits on a drained worker.
 - A worker that closes an output and serves the path again is a new instance,
   so a relay never splices the closed instance's cached groups into it.
 - A per-output epoch costs no cut on the first view.
@@ -16,8 +14,11 @@ Today a claim names no instance, a relay's session answers a request under a
 claim with a placeholder source before anything goes upstream, and no answer
 on the wire names an instance, so the relay's front always resolves without
 an epoch. A worker that announces its output's exact path with a fresh epoch
-to get one cuts the first viewer: the front resolved through the claim, and
-the epoch route supersedes it with `Unroutable`. lite-07 only; older versions
+to get one restarts the first viewer: the front resolved through the claim,
+and the epoch route wins the path and is announced as a `Restart`
+([Restart](/quest/m0/broadcast-epoch/restart.md)). A front on a drained
+worker no longer needs this: under Restart a request joins a front only while
+its route still wins, on every version (re-scoped 2026-10-07). lite-07 only; older versions
 and moq-transport keep today's behavior.
 
 ## Plan
@@ -32,18 +33,19 @@ Decisions (2026-10-07, proposed for the maintainer):
 - The epoch lives on the broadcast, since a broadcast is an instance, and
   `Request::accept` reads it from the accepted broadcast rather than taking
   it as an argument.
-- A front adopts the epoch it learns. A request joins an unread front only
-  while the front's route is still the best; otherwise it gets a fresh front.
-  That join rule is unsafe without epochs, because a downstream relay's
-  lingering copy would land on another worker under its cached track; with
-  them, the copy names its epoch and is refused on a mismatch.
+- A front adopts the epoch it learns. Restart's join rule (a request joins a
+  front only while its route still wins) can land a downstream relay's
+  lingering copy on another worker under its cached track, since the
+  upstream relay's per-path winner moves without the downstream claim route
+  changing. With the epoch, the copy names it and is refused on a mismatch.
 - A refusal of a front's learned epoch means that instance is gone: the front
   ends, and a request that joined it re-resolves onto a fresh front (a new
   TRACK_INFO exchange) instead of failing. Only readers the old instance was
   serving see a cut.
 - A front someone reads stays on its instance even when a cheaper route
-  appears: moving it would start a second instance at the path. A worker that
-  wants its viewers off closes its outputs, and they re-request.
+  appears, as Restart's sticky subscriptions already do: moving it would
+  start a second instance at the path. A worker that wants its viewers off
+  closes its outputs, and they re-request.
 - No dedicated "broadcast closed" message: with the epoch, the next request
   re-resolves anyway, and an exact announcement already gets ANNOUNCE_END.
 - The draft's "the Epoch of the route it resolved" and "the route it would
@@ -53,7 +55,8 @@ Decisions (2026-10-07, proposed for the maintainer):
   this line's README to match.
 - A worker using this should not also announce its output's exact path with
   the epoch: that announcement and TRACK_INFO race on separate streams, and
-  the announcement still supersedes the claim front.
+  the announcement still wins new requests over the claim front and is
+  announced as a `Restart`.
 - A worker drains feed by feed by closing the outputs it wants off: their
   readers re-request and land on the cheapest worker as a new instance, one
   short cut per feed instead of withdrawing the claim and cutting everything.
@@ -66,8 +69,7 @@ Decisions (2026-10-07, proposed for the maintainer):
 This is a lite-07 wire change, so it lands before the version is cut.
 
 Verification: a relay integration test with two claim workers (mocked time).
-After a drain, an unread path re-resolves to the cheaper worker at once. A
-worker restarting an output within the linger delivers the new instance from
+A worker restarting an output within the linger delivers the new instance from
 its first group, with nothing stale. A worker answering with a per-output
 epoch serves its first viewer without a cut. A worker closing a path while
 it is read sends the re-request to the cheaper worker as a new instance. A
@@ -80,6 +82,7 @@ it. Wire: lite-07 TRACK_INFO gains `Epoch`.
 
 ## Related
 
-- [Idle fronts](/quest/m0/idle-fronts.md) - ends an unread front after the linger on every version; this re-resolves it at once on lite-07
+- [Restart](/quest/m0/broadcast-epoch/restart.md) - the join rule and sticky subscriptions this builds on
+- [Idle fronts](/quest/m0/idle-fronts.md) - ends an unread front and its per-path state after the linger on every version
 - [Upstream position regression](/quest/m0/largest-regression.md) - catches a restart on versions without this field
 - [Finalize moq-lite-07](/quest/m1/lite07-finalize.md) - waits on this wire change

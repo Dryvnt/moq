@@ -64,10 +64,13 @@ struct Shared<S: crate::transport::poll::Session> {
 	goaway: crate::goaway::Protocol,
 	// Control streams still serving the peer data, which a draining close waits for.
 	owed: AtomicUsize,
+	// The send time an untimed track's frames carry, since no lite version can mark them
+	// untimed yet (see `wire_timestamp`).
+	runtime: crate::time::Clock,
 }
 
 /// Largest millisecond duration every implementation can carry losslessly.
-const MAX_SAFE_AGE_MS: u64 = (1_u64 << 53) - 1;
+const MAX_SAFE_DELAY_MS: u64 = (1_u64 << 53) - 1;
 
 /// The budget to serve a peer with, given what its wire could tell us.
 ///
@@ -76,23 +79,23 @@ const MAX_SAFE_AGE_MS: u64 = (1_u64 << 53) - 1;
 /// as real time would discard backlog a legacy subscriber never declined, so fall
 /// back to a window wide enough not to drop and leave enforcement to the receiver,
 /// exactly as the IETF path does for the same reason.
-fn serving_max_age(version: Version, requested: Duration) -> Duration {
-	match version.carries_max_age() {
+fn serving_max_delay(version: Version, requested: Duration) -> Duration {
+	match version.carries_max_delay() {
 		true => requested,
-		false => Duration::from_millis(MAX_SAFE_AGE_MS),
+		false => Duration::from_millis(MAX_SAFE_DELAY_MS),
 	}
 }
 
 /// Position a subscription's read cursor for the wire serving it.
 ///
 /// On lite-06 there is nothing to do: `Consumer::subscribe` resolves the cursor from the
-/// subscription itself, at the oldest group its own Max Age still considers fresh, floored
+/// subscription itself, at the oldest group its own max delay still considers fresh, floored
 /// at the group it named.
 ///
 /// Pre-06 wires are the exception: their drafts define an absent `Group Start` as the
 /// latest group, so say so explicitly rather than letting the budget reach back. Lite03-05
-/// carry a Max Age, but there it is a staleness tolerance only; Lite01/02 additionally get
-/// an unbounded budget so nothing is dropped under them (see [`serving_max_age`]), which
+/// carry a `Subscriber Max Age`, but there it is a staleness tolerance only; Lite01/02 additionally get
+/// an unbounded budget so nothing is dropped under them (see [`serving_max_delay`]), which
 /// must not read as a request to replay the whole cache on join.
 ///
 /// `latest` is the newest group when the SUBSCRIBE arrived, not once the subscription
@@ -167,6 +170,7 @@ impl<S: crate::transport::poll::Session> Publisher<S> {
 				version: config.version,
 				goaway: config.goaway,
 				owed: AtomicUsize::new(0),
+				runtime: config.runtime.clone(),
 			}),
 			runtime: config.runtime,
 			accept,
@@ -1201,13 +1205,13 @@ impl<S: crate::transport::poll::Session> Request<S> for TrackInfoServe {
 	) -> Poll<Result<ControlFlow<()>, Error>> {
 		let info = ready!(self.querying.poll_ok(waiter))?;
 
-		// TRACK_INFO only flows on Lite05+ (the encode errors otherwise), where every
-		// track is timed, so the model's timescale and retention bound go on the wire
-		// verbatim.
+		// TRACK_INFO only flows on Lite05+ (the encode errors otherwise), where the
+		// timescale is mandatory. An untimed track declares the default, the scale its
+		// frames' send times go out at (see `wire_timestamp`).
 		writer.buffer(&lite::TrackInfo {
 			priority: info.priority,
 			max_age: info.max_age,
-			timescale: info.timescale,
+			timescale: info.timescale.unwrap_or_default(),
 		})?;
 		Poll::Ready(Ok(ControlFlow::Break(())))
 	}
@@ -1250,7 +1254,7 @@ impl<S: crate::transport::poll::Session> Request<S> for SubscribeServe<S> {
 	fn start(shared: &Shared<S>, msg: Self::Message, broadcast: crate::broadcast::Consumer) -> Result<Self, Error> {
 		let subscription = crate::track::Subscription {
 			priority: msg.priority,
-			max_age: serving_max_age(shared.version, msg.max_age),
+			max_delay: serving_max_delay(shared.version, msg.max_delay),
 			..Bounds::from(&msg).positions()
 		};
 
@@ -1305,7 +1309,7 @@ impl<S: crate::transport::poll::Session> Request<S> for SubscribeServe<S> {
 					// "don't emit the prefix" (the frames still carry timestamps in the
 					// model, just not on this wire).
 					let timescale = if shared.version.has_track_stream() {
-						Some(track.info().timescale)
+						Some(track.info().timescale.unwrap_or_default())
 					} else {
 						None
 					};
@@ -1317,7 +1321,7 @@ impl<S: crate::transport::poll::Session> Request<S> for SubscribeServe<S> {
 					if !shared.version.has_track_stream() {
 						let info = lite::SubscribeOk {
 							priority: msg.priority,
-							max_age: Duration::ZERO,
+							max_delay: Duration::ZERO,
 							start_group: None,
 							end_group: None,
 						};
@@ -1339,6 +1343,7 @@ impl<S: crate::transport::poll::Session> Request<S> for SubscribeServe<S> {
 						track_priority_seen: msg.priority,
 						version: shared.version,
 						timescale,
+						runtime: shared.runtime.clone(),
 						opens: Default::default(),
 					};
 
@@ -1453,7 +1458,7 @@ impl<S: crate::transport::poll::Session> Request<S> for FetchServe {
 					// FETCH is gated to lite-05+, which learned the track timescale via
 					// TRACK_INFO.
 					let timescale = if shared.version.has_track_stream() {
-						Some(group.timescale())
+						Some(group.timescale().unwrap_or_default())
 					} else {
 						None
 					};
@@ -1498,6 +1503,7 @@ impl<S: crate::transport::poll::Session> Request<S> for FetchServe {
 								batched.payload.len() as u64,
 								*timescale,
 								prev_ts,
+								&shared.runtime,
 							)?;
 							let payload = std::mem::take(&mut batched.payload);
 							if !payload.is_empty() {
@@ -1517,7 +1523,14 @@ impl<S: crate::transport::poll::Session> Request<S> for FetchServe {
 							}
 							match ready!(group.poll_next_frame(waiter))? {
 								Some(next) => {
-									buffer_frame_info(writer, next.timestamp, next.size, *timescale, prev_ts)?;
+									buffer_frame_info(
+										writer,
+										next.timestamp,
+										next.size,
+										*timescale,
+										prev_ts,
+										&shared.runtime,
+									)?;
 									*frame = Some(next);
 									return Poll::Ready(Ok(ControlFlow::Continue(())));
 								}
@@ -1560,7 +1573,7 @@ mod test {
 		// What run_subscribe hands the model for a peer that sent no budget at all.
 		let served = |version| {
 			producer.subscribe(
-				track::Subscription::default().with_max_age(serving_max_age(version, std::time::Duration::ZERO)),
+				track::Subscription::default().with_max_delay(serving_max_delay(version, std::time::Duration::ZERO)),
 			)
 		};
 		let drain = |subscriber: &mut track::Subscriber| {
@@ -1585,13 +1598,13 @@ mod test {
 		// Lite03-05 declare a budget, but their drafts define it as a staleness tolerance
 		// and an absent start as the latest group, so they are pinned all the same.
 		let mut tolerant =
-			producer.subscribe(track::Subscription::default().with_max_age(std::time::Duration::from_secs(5)));
+			producer.subscribe(track::Subscription::default().with_max_delay(std::time::Duration::from_secs(5)));
 		position_cursor(&mut tolerant, Version::Lite05, None, producer.latest());
 		assert_eq!(drain(&mut tolerant), vec![2]);
 
 		// On lite-06 the declared budget is what resolves the start, so it stands.
 		let mut declared =
-			producer.subscribe(track::Subscription::default().with_max_age(std::time::Duration::from_secs(5)));
+			producer.subscribe(track::Subscription::default().with_max_delay(std::time::Duration::from_secs(5)));
 		position_cursor(&mut declared, Version::Lite06, None, producer.latest());
 		assert_eq!(drain(&mut declared), vec![0, 1, 2]);
 	}
@@ -1698,7 +1711,7 @@ mod test {
 		use futures::FutureExt;
 
 		let mut producer = track_producer("test");
-		let mut subscriber = producer.subscribe(track::Subscription::default().with_max_age(Duration::from_secs(5)));
+		let mut subscriber = producer.subscribe(track::Subscription::default().with_max_delay(Duration::from_secs(5)));
 
 		producer.create_group(group::Info { sequence: 2 }).unwrap();
 		match recv_next(&mut subscriber, false, false).await.unwrap() {
@@ -1714,7 +1727,7 @@ mod test {
 			None => panic!("the late-arriving group was skipped"),
 		}
 
-		// Staleness is the max age window's job, not arrival order's: the track
+		// Staleness is the max delay window's job, not arrival order's: the track
 		// still finishes normally afterward.
 		producer.finish_at(3).unwrap();
 		match recv_next(&mut subscriber, false, false).await.unwrap() {
@@ -2032,21 +2045,41 @@ mod announce_test {
 /// (catalogs, control channels, IETF transport).
 ///
 /// `prev_ts` carries the running baseline, so the first frame deltas against 0. The
-/// model layer (`group::Producer::create_frame`) already converted the timestamp
-/// into the track timescale, so its raw value goes straight onto the wire. Mirrors
-/// the decode in the subscriber's `run_group`.
+/// model layer (`group::Producer::create_frame`) already converted a timed frame into
+/// the track timescale, so its raw value goes straight onto the wire. Mirrors the
+/// decode in the subscriber's `run_group`.
 fn buffer_frame_info<W: crate::transport::poll::SendStream>(
 	writer: &mut Writer<W, Version>,
-	timestamp: crate::Timestamp,
+	timestamp: Option<crate::Timestamp>,
 	size: u64,
 	timescale: Option<crate::Timescale>,
 	prev_ts: &mut u64,
+	runtime: &crate::time::Clock,
 ) -> Result<(), Error> {
-	if timescale.is_some() {
-		buffer_zigzag_delta(writer, timestamp.value(), prev_ts)?;
+	if let Some(timescale) = timescale {
+		buffer_zigzag_delta(writer, wire_timestamp(timestamp, timescale, runtime)?, prev_ts)?;
 	}
 	writer.buffer_varint(size)?;
 	Ok(())
+}
+
+/// A frame or datagram timestamp as its raw value at the wire `timescale`.
+///
+/// No lite version encodes an absent timestamp yet, so a payload on an untimed track
+/// carries its send time on `runtime` instead, at the default scale its TRACK_INFO
+/// declares. A timed payload is already at the track's timescale.
+fn wire_timestamp(
+	timestamp: Option<crate::Timestamp>,
+	timescale: crate::Timescale,
+	runtime: &crate::time::Clock,
+) -> Result<u64, Error> {
+	match timestamp {
+		Some(timestamp) => Ok(timestamp.value()),
+		None => crate::Timestamp::from(runtime.now())
+			.convert(timescale)
+			.map(|now| now.value())
+			.map_err(|_| Error::BoundsExceeded(crate::coding::BoundsExceeded)),
+	}
 }
 
 /// Buffer `curr` as a zigzag-mapped varint delta against `*prev`, then advance
@@ -2248,6 +2281,8 @@ struct Subscription<S: crate::transport::poll::Session> {
 	/// Negotiated timestamp scale for this track. `Some(_)` on lite-05+ after
 	/// TRACK_INFO; used to validate per-frame timestamps before encoding.
 	timescale: Option<crate::Timescale>,
+	/// The clock an untimed track's send times are read from.
+	runtime: crate::time::Clock,
 	/// The group streams this subscription opened, shared by every group it serves.
 	opens: Arc<Opens>,
 }
@@ -2268,11 +2303,15 @@ impl<S: crate::transport::poll::Session> Subscription<S> {
 	/// The datagram is dropped (there is no group fallback) if the encoded body doesn't fit the
 	/// transport's datagram limit or the send fails (congestion / no capacity right now).
 	fn serve_datagram(&mut self, datagram: crate::Datagram) {
+		// Datagrams are lite-05+, which always declares a timescale in TRACK_INFO.
+		let Ok(timestamp) = wire_timestamp(datagram.timestamp, self.timescale.unwrap_or_default(), &self.runtime)
+		else {
+			return;
+		};
 		let body = lite::Datagram {
 			subscribe: self.id,
 			sequence: datagram.sequence,
-			// Already at the track timescale (normalized by the model producer).
-			timestamp: datagram.timestamp.value(),
+			timestamp,
 			payload: datagram.payload,
 		};
 		// has_datagrams is checked before this runs, so encoding never hits the version guard.
@@ -2396,7 +2435,7 @@ impl<S: crate::transport::poll::Session> TrackRun<S> {
 		let bounds = Bounds::from(&upd);
 		let _ = self.track.update(crate::track::Subscription {
 			priority: upd.priority,
-			max_age: serving_max_age(self.ctx.version, upd.max_age),
+			max_delay: serving_max_delay(self.ctx.version, upd.max_delay),
 			..bounds.positions()
 		});
 		// An explicit start moves the read cursor. Lite-06+ encodes an absent
@@ -2794,6 +2833,7 @@ impl<S: crate::transport::poll::Session> GroupServe<S> {
 									batched.payload.len() as u64,
 									self.ctx.timescale,
 									&mut self.prev_ts,
+									&self.ctx.runtime,
 								);
 								if let Err(err) = buffered {
 									break 'serve Err(err);
@@ -2823,6 +2863,7 @@ impl<S: crate::transport::poll::Session> GroupServe<S> {
 											next.size,
 											self.ctx.timescale,
 											&mut self.prev_ts,
+											&self.ctx.runtime,
 										);
 										if let Err(err) = buffered {
 											break 'serve Err(err);
@@ -3032,6 +3073,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3054,7 +3096,7 @@ mod serve_group_test {
 		assert_eq!(log.resets(), vec![crate::StreamError::Old.to_code()]);
 	}
 
-	/// A subscription group keeps checking the max age while a transport write is
+	/// A subscription group keeps checking the max delay while a transport write is
 	/// flow-control blocked, so a stalled send cannot pin the stream indefinitely.
 	#[moq_net_sim::test]
 	async fn blocked_transport_write_expires_with_the_group() {
@@ -3071,6 +3113,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3114,6 +3157,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3122,7 +3166,7 @@ mod serve_group_test {
 		let mut old = track.append_group().unwrap();
 		let mut frame = old
 			.create_frame(frame::Info {
-				timestamp: Timestamp::ZERO,
+				timestamp: Some(Timestamp::ZERO),
 				size: 2,
 			})
 			.unwrap();
@@ -3159,7 +3203,7 @@ mod serve_group_test {
 		assert_eq!(log.resets(), vec![crate::StreamError::Old.to_code()]);
 	}
 
-	/// A subscription group keeps checking the max age while transport stream credit is
+	/// A subscription group keeps checking the max delay while transport stream credit is
 	/// exhausted, so returning credit is reserved for content that is still live.
 	#[moq_net_sim::test]
 	async fn blocked_transport_open_expires_with_the_group() {
@@ -3175,6 +3219,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3201,7 +3246,7 @@ mod serve_group_test {
 		assert!(matches!(serve.await, Err(Error::Old)));
 	}
 
-	/// Lite01/02 have no max age field, so a SUBSCRIBE from one decodes as
+	/// Lite01/02 have no max delay field, so a SUBSCRIBE from one decodes as
 	/// `Duration::ZERO`. Serving that as a real-time budget would hold every legacy
 	/// peer to the live edge and discard backlog it never declined, so those versions
 	/// get a non-dropping window and leave enforcement to the receiver.
@@ -3211,17 +3256,17 @@ mod serve_group_test {
 	#[test]
 	fn a_version_without_the_field_serves_a_non_dropping_budget() {
 		for version in [Version::Lite01, Version::Lite02] {
-			let max_age = serving_max_age(version, Duration::ZERO);
+			let max_delay = serving_max_delay(version, Duration::ZERO);
 			assert!(
-				max_age >= Duration::from_secs(86_400),
-				"{version:?} must not be served as real time: {max_age:?}"
+				max_delay >= Duration::from_secs(86_400),
+				"{version:?} must not be served as real time: {max_delay:?}"
 			);
 		}
 
 		// A version that does carry it is taken at its word, zero included.
-		assert_eq!(serving_max_age(Version::Lite05, Duration::ZERO), Duration::ZERO);
+		assert_eq!(serving_max_delay(Version::Lite05, Duration::ZERO), Duration::ZERO);
 		assert_eq!(
-			serving_max_age(Version::Lite05, Duration::from_secs(3)),
+			serving_max_delay(Version::Lite05, Duration::from_secs(3)),
 			Duration::from_secs(3)
 		);
 	}
@@ -3245,6 +3290,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3287,6 +3333,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3328,6 +3375,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite06,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 
@@ -3372,6 +3420,7 @@ mod serve_group_test {
 			track_priority_seen: 0,
 			version: Version::Lite07,
 			timescale: Some(crate::Timescale::default()),
+			runtime: crate::time::Clock::sim(),
 			opens: Default::default(),
 		};
 		let bounds = Bounds {
@@ -3425,7 +3474,7 @@ mod serve_group_test {
 			track.request_start(Some(0)).unwrap();
 			let subscription = track::Subscription::default()
 				.with_start(track::Position::group(start_group))
-				.with_max_age(Duration::from_secs(30));
+				.with_max_delay(Duration::from_secs(30));
 			let subscriber = track.subscribe(subscription);
 
 			let session = ScriptedSession::new(Vec::new());
@@ -3441,6 +3490,7 @@ mod serve_group_test {
 				track_priority_seen: 0,
 				version: Version::Lite07,
 				timescale: Some(crate::Timescale::default()),
+				runtime: crate::time::Clock::sim(),
 				opens: opens.clone(),
 			};
 			let bounds = Bounds {
@@ -3493,7 +3543,7 @@ mod serve_group_test {
 
 		relay.run.update(lite::SubscribeUpdate {
 			priority: 0,
-			max_age: Duration::from_secs(30),
+			max_delay: Duration::from_secs(30),
 			start_group: None,
 			end_group: None,
 			start_frame: 0,
@@ -3519,7 +3569,7 @@ mod serve_group_test {
 
 		relay.run.update(lite::SubscribeUpdate {
 			priority: 0,
-			max_age: Duration::from_secs(30),
+			max_delay: Duration::from_secs(30),
 			start_group: None,
 			end_group: None,
 			start_frame: 0,
@@ -3542,7 +3592,7 @@ mod serve_group_test {
 		// The subscriber moves its start past the held group before the source resolves.
 		let update = lite::SubscribeUpdate {
 			priority: 0,
-			max_age: Duration::ZERO,
+			max_delay: Duration::ZERO,
 			start_group: Some(7),
 			end_group: None,
 			start_frame: 0,
@@ -4109,7 +4159,7 @@ mod tests {
 						broadcast: broadcast.clone(),
 						track: "video".into(),
 						priority: 0,
-						max_age: Duration::ZERO,
+						max_delay: Duration::ZERO,
 						start_group: None,
 						end_group: None,
 						start_frame: 0,
@@ -4162,7 +4212,7 @@ mod tests {
 			broadcast: crate::Path::new("room"),
 			track: "video".into(),
 			priority: 1,
-			max_age: Duration::ZERO,
+			max_delay: Duration::ZERO,
 			start_group: None,
 			end_group: None,
 			start_frame: 0,
@@ -4185,7 +4235,7 @@ mod tests {
 
 		let update = lite::SubscribeUpdate {
 			priority: 7,
-			max_age: Duration::ZERO,
+			max_delay: Duration::ZERO,
 			start_group: None,
 			end_group: None,
 			start_frame: 0,
