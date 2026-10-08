@@ -4443,7 +4443,11 @@ mod tests {
 					"{case}: TRACK_INFO was not sent"
 				);
 				assert!(track.demand().is_used(), "{case}: the track was let go");
-				assert_eq!(publisher.shared.owed.load(Ordering::Relaxed), 0, "{case}: the hold owes");
+				assert_eq!(
+					publisher.shared.owed.load(Ordering::Relaxed),
+					0,
+					"{case}: the hold owes"
+				);
 
 				session.close(close);
 				assert!(drive(&mut serve).await, "{case}: still holding");
@@ -4610,12 +4614,11 @@ mod tests {
 		let interests = Interests::new(slots.clone());
 		let room = crate::Path::new("room");
 
-		for (first, second) in [
-			(Charge::Track, Charge::Subscribe),
-			(Charge::Subscribe, Charge::Track),
-		] {
+		for (first, second) in [(Charge::Track, Charge::Subscribe), (Charge::Subscribe, Charge::Track)] {
 			let a = interests.charge(&room, "video", first).expect("the first fits");
-			let b = interests.charge(&room, "video", second).expect("shares the first's slot");
+			let b = interests
+				.charge(&room, "video", second)
+				.expect("shares the first's slot");
 			assert!(matches!(
 				interests.charge(&room, "audio", Charge::Track),
 				Err(Error::TooManyRequests)
