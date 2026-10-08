@@ -86,6 +86,10 @@ new epoch.
 Public API: Rust and JS, the broadcast's epoch and what `accept` does with
 it. Wire: lite-07 TRACK_INFO gains `Epoch`.
 
+## Required
+
+- [Refused idle copy](/quest/m0/refused-copy.md) - builds the handler that ends a refused idle copy and withholds its cache, which a refused epoch reuses
+
 ## Related
 
 - [Restart](/quest/m0/broadcast-epoch/restart.md) - the join rule and sticky subscriptions this builds on
