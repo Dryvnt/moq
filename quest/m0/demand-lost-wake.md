@@ -81,10 +81,6 @@ network can't hit a window inside a single poll.
 
 Public API: none. Wire: none.
 
-## Required
-
-- [Idle fronts](/quest/m0/idle-fronts.md) - edits the same closure (#5054); build on it
-
 ## Related
 
 - [Front deadline index](/quest/m1/front-deadline-index.md) - later replaces this closure with per-track wakes, which must keep the fix
