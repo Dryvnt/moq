@@ -8,7 +8,8 @@ track's `Unused` edge: the copy keeps its upstream subscription for nobody,
 and the front never retires, with nothing to bound it on a quiet
 single-track front. In the other direction a reader stalls on a parked track
 until the linger expires. `broadcast::Demand::poll_demand` has the same shape
-and is fixed with it.
+and is fixed with it, and a closed broadcast never spins the front's holder
+edge.
 
 ## Plan
 
@@ -26,6 +27,13 @@ Facts from `main` at 7c6b6afc1 (line numbers at time of writing):
   duplicate `Used` or `Unused`.
 - `broadcast::Demand::poll_demand` (`broadcast.rs:136-147`, `887-904`):
   `register_demand` drops each track's `Ready`, then recomputes `is_used()`.
+- On #5054's head 3b6d36f67, `poll_held` and `poll_unheld`
+  (`broadcast.rs:386-393`) map kio's `Ready(Err(Closed))`, returned before
+  registering, to `Ready`, and `Step::Holders` `continue`s while
+  `is_held() == held`. A closed broadcast would livelock the driver in
+  `kio::wait`, which has no budget. Not reachable today: the only closers of
+  the front's broadcast, `Action::End` and `Retire` through `End`, end the
+  driver in the same pass, and `FrontTask` owns the producer.
 
 Decided 2026-10-08:
 
@@ -37,6 +45,10 @@ Decided 2026-10-08:
   `poll_unheld`): the closure steps on `Ready`, and the handler re-reads and
   polls again (registering) when nothing changed. Not its wrappers, which
   map a closed channel to `Ready` on every pass.
+- Fold the holder-edge hardening in, since this rewrites the same closure: a
+  closed broadcast ends the front (or skips the holder edge) instead of
+  polling it again, so safety is local rather than resting on who owns the
+  producer.
 - Distinct from kio's level-only demand, which
   [Front deadline index](/quest/m1/front-deadline-index.md) scopes out: there
   a reader that comes and goes between polls skips restarting the linger, but
@@ -63,8 +75,9 @@ a reader thread taking and dropping a track around the driver's poll, failing
 without the fix; the same for `Demand`. Also cover a track that closes while
 used (one `Unused`) and one that closes already unused (no spin), and for
 `Demand` two tracks: `Pending` while only one is read, done once its last
-reader leaves. The simulated network can't hit a window inside a single
-poll.
+reader leaves. A front whose broadcast closes while unheld must not spin;
+close it from a test, since no production path does yet. The simulated
+network can't hit a window inside a single poll.
 
 Public API: none. Wire: none.
 

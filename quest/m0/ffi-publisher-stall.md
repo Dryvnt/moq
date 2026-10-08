@@ -50,14 +50,17 @@ Decided 2026-10-08:
 - The harness fails a cell when any connection in it idles out, so this
   class of regression fails every run instead of passing slowly. Land a
   moq-ffi regression test too if the cause allows one.
+- The harness shuts down every client it starts cleanly, so every idle-out
+  counts. Today `gst-launch` dies on SIGPIPE and `moq-cli` can be killed
+  under `timeout -k`, which may leave a QUIC connection to idle out. No
+  exception list for killed clients: it would hide a real idle-out behind a
+  harness kill.
 
-Harness pitfalls: one relay serves the whole run, and its `connection closed
+Harness pitfall: one relay serves the whole run, and its `connection closed
 err=... timed out` warning (`rs/moq-relay/src/relay.rs:792`) names no
 connection and lands about 10 s after the peer went quiet, often in a later
 cell. Tie each idle-out to its connection first, by logging the connection
-there or having the client report its own drop. A client the harness kills
-(`gst-launch` on SIGPIPE, `moq-cli` under `timeout -k`) may close without a
-CONNECTION_CLOSE and idle out legitimately; that doesn't count.
+there or having the client report its own drop.
 
 Public API: none expected. Wire: none.
 
