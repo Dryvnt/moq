@@ -43,6 +43,15 @@ runner's scenario name, where it has one:
 
 ## Plan
 
+Decided in the 2026-10-06 audit: external draft PR
+[#4927](https://github.com/moq-dev/moq/pull/4927) (mondain) owns two cases in
+Rust and JS, GROUP_ORDER outside 1..2 and repeated unknown or GREASE Setup
+Options. Do not implement them here. When #4927 merges, delete those two
+cases from the Goal and their mapping lines (`group.rs`, the `parameters.rs`
+GREASE entry); this quest keeps the rest. If #4927 stalls, they come back
+here. Rejected: asking the contributor to retarget #4927 at this quest's
+branch.
+
 Decided with the maintainer on 2026-10-04 and 2026-10-05:
 
 - **Add the missing session codes to the shared registry.**
@@ -123,5 +132,4 @@ behaviour moves closer to the drafts.
 ## Related
 
 - [Request tokens](/quest/m1/auth/request-token.md) - owns request-token decode and AUTH_TOKEN_CACHE_OVERFLOW
-- [Request caps](/quest/m0/request-caps.md) - bounds peer lengths and counts; shares the decode paths
 - [moq-transport request codes](/quest/m2/ietf-request-codes.md) - the request-level half of the same validator report

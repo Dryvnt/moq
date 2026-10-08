@@ -13,7 +13,7 @@ are gone.
 ## Plan
 
 Decided in the 2026-09-30 plan: the library shards and the runtime drives.
-The library does not own threads, so embedders (libmoq, moq-ffi) keep their
+The library does not own threads, so embedders (moq-ffi and the bindings over it) keep their
 own threading model.
 
 - `moq_sock::shard` (the group, claims, and steering filter) stays in
@@ -44,3 +44,4 @@ Update `doc/bin/relay/` for the flag change.
 ## Related
 
 - [UDP demux](/quest/m2/one-port/udp-demux.md) - demuxes each shard's socket; keep the demux over whatever the library hands out
+- [Steer only QUIC by connection ID](/quest/m2/one-port/shard-steering.md) - the filter this moves leaves non-QUIC flows to the kernel's 4-tuple hash
