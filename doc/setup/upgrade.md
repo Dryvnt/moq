@@ -227,6 +227,10 @@ These land with the next breaking release, not the 2026-09-23 train.
   timestamp: pass `frame.timestamp` alongside `frame.payload`, or `undefined`
   for an untimed frame, whose samples present at `tfdt`.
   `Cmaf.decodeTimestamp` is gone; the frame timestamp is the fragment's time.
+  moq-mux's CMAF `Wire::write` refuses a track whose timescale isn't the init's
+  `mdhd` timescale with `fmp4::Error::TimescaleMismatch`; declare it with
+  `track::Info::with_timescale`. Both decoders refuse a `trun` whose
+  `data_offset` doesn't start at the next sample in the `mdat`.
 
 ## Wire
 

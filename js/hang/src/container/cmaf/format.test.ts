@@ -109,6 +109,17 @@ test("CmafFormat times an untimed fragment from its tfdt", () => {
 	expect(frames.map((f) => f.timestamp)).toEqual([1_033_333, 1_100_000, 1_066_667] as Time.Micro[]);
 });
 
+// Samples are read front to back, so a run that skips bytes is refused rather than sliced wrong.
+test("CmafFormat refuses a run that doesn't start at the next sample", () => {
+	const segment = fragment(0, [[3000, 0]], [[3000, 0]]);
+	const view = new DataView(segment.buffer);
+	// The second trun's data_offset follows its type, version/flags, and sample count.
+	const trun = segment.findLastIndex((_, i) => new TextDecoder().decode(segment.subarray(i, i + 4)) === "trun");
+	view.setInt32(trun + 12, view.getInt32(trun + 12) + 1);
+
+	expect(() => new Format(INIT).decode(segment, undefined)).toThrow(/data_offset/);
+});
+
 function at(ticks: number): Time.Timestamp {
 	return new Time.Timestamp(ticks, Time.Timescale(TIMESCALE));
 }

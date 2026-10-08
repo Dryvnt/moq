@@ -144,6 +144,14 @@ pub enum Error {
 	#[error("invalid data offset")]
 	InvalidDataOffset,
 
+	/// The frame timestamp carries a fragment's earliest presentation time exactly only when the
+	/// track counts in the same ticks as the media.
+	#[error("track timescale {track:?} doesn't match the CMAF mdhd timescale {mdhd:?}")]
+	TimescaleMismatch {
+		track: Option<moq_net::Timescale>,
+		mdhd: moq_net::Timescale,
+	},
+
 	#[error("unknown track {0}")]
 	UnknownTrack(u32),
 
@@ -327,6 +335,12 @@ impl Container for Wire {
 
 	fn write(&self, group: &mut moq_net::group::Producer, frames: &[Frame]) -> std::result::Result<(), Self::Error> {
 		let timescale = moq_net::Timescale::new(self.trak.mdia.mdhd.timescale as u64)?;
+		if group.timescale() != Some(timescale) {
+			return Err(Error::TimescaleMismatch {
+				track: group.timescale(),
+				mdhd: timescale,
+			});
+		}
 		let track_id = self.trak.tkhd.track_id;
 		encode(
 			group,
@@ -382,19 +396,30 @@ pub(crate) fn decode(
 
 	let mut cursor = std::io::Cursor::new(&data);
 	let mut moof = None;
-	let mut mdat_data = None;
+	let mut mdat = None;
 
-	while let Some(atom) = mp4_atom::Any::decode_maybe(&mut cursor)? {
+	loop {
+		let start = cursor.position() as usize;
+		let Some(atom) = mp4_atom::Any::decode_maybe(&mut cursor)? else {
+			break;
+		};
 		match atom {
-			mp4_atom::Any::Moof(m) => moof = Some(m),
-			mp4_atom::Any::Mdat(m) => mdat_data = Some(m.data),
+			mp4_atom::Any::Moof(m) => moof = Some((start, m)),
+			mp4_atom::Any::Mdat(m) => mdat = Some((cursor.position() as usize - m.data.len(), m.data)),
 			_ => {}
 		}
 	}
 
-	let moof = moof.ok_or(Error::NoMoof)?;
-	let mdat_data = mdat_data.ok_or(Error::NoMdat)?;
+	let (moof_start, moof) = moof.ok_or(Error::NoMoof)?;
+	let (mdat_start, mdat_data) = mdat.ok_or(Error::NoMdat)?;
 	let traf = moof.traf.first().ok_or(Error::NoTraf)?;
+
+	// Samples are read from the mdat front to back, so each run must start where the previous
+	// one ended. A run's data_offset counts from the moof's first byte (CMAF's default-base-is-moof).
+	if traf.tfhd.base_data_offset.is_some() {
+		return Err(Error::InvalidDataOffset);
+	}
+	let data_start = mdat_start.checked_sub(moof_start).ok_or(Error::InvalidDataOffset)?;
 	let tfdt = traf.tfdt.as_ref().ok_or(Error::NoTfdt)?;
 	let base_dts = tfdt.base_media_decode_time;
 
@@ -417,6 +442,12 @@ pub(crate) fn decode(
 	let mut sample_index = 0usize;
 
 	for trun in &traf.trun {
+		if let Some(data_offset) = trun.data_offset
+			&& usize::try_from(data_offset).ok() != Some(data_start + offset)
+		{
+			return Err(Error::InvalidDataOffset);
+		}
+
 		for entry in &trun.entries {
 			let size = entry.size.or(default_size).unwrap_or(0) as usize;
 			let end = offset + size;
@@ -1314,7 +1345,7 @@ mod tests {
 		use mp4_atom::Encode;
 
 		// Microsecond timescale so each tick maps 1:1 to the Timestamp's µs.
-		// decode() walks the mdat by sample size and ignores data_offset, so a
+		// Without a data_offset, decode() reads the run from the start of the mdat, so a
 		// hand-built moof+mdat with explicit per-sample durations is enough.
 		let timescale = moq_net::Timescale::MICRO;
 		let moof = mp4_atom::Moof {
@@ -1328,7 +1359,7 @@ mod tests {
 					base_media_decode_time: 0,
 				}),
 				trun: vec![mp4_atom::Trun {
-					data_offset: Some(0),
+					data_offset: None,
 					entries: vec![
 						mp4_atom::TrunEntry {
 							size: Some(2),
@@ -1600,7 +1631,8 @@ mod tests {
 		let wire = Wire::new(synthesize_video_trak(1, 1_000_000, &config, None).unwrap());
 
 		let broadcast = moq_net::broadcast::Info::new().produce();
-		let track = broadcast.create_track("video", None).unwrap();
+		let info = moq_net::track::Info::default().with_timescale(timescale);
+		let track = broadcast.create_track("video", info).unwrap();
 		let mut group = track.append_group().unwrap();
 		let input = [sample(100_000), sample(33_000), sample(66_000)];
 		wire.write(&mut group, &input).unwrap();
@@ -1638,6 +1670,49 @@ mod tests {
 		};
 		let source = u128::from(source);
 		assert_eq!(micros(&frames), [source, source + 66_000, source + 33_000]);
+	}
+
+	/// A track at another scale than the media couldn't carry the earliest presentation time
+	/// exactly, so writing a fragment to it fails.
+	#[test]
+	fn write_refuses_a_track_at_another_timescale() {
+		let mut config = VideoConfig::new(hang::catalog::VideoCodec::VP8);
+		config.coded_width = Some(320);
+		config.coded_height = Some(240);
+		let wire = Wire::new(synthesize_video_trak(1, 90_000, &config, None).unwrap());
+
+		let broadcast = moq_net::broadcast::Info::new().produce();
+		let info = moq_net::track::Info::default().with_timescale(moq_net::Timescale::MILLI);
+		let track = broadcast.create_track("video", info).unwrap();
+		let mut group = track.append_group().unwrap();
+
+		let err = wire.write(&mut group, &[sample(0)]).unwrap_err();
+		assert!(matches!(err, Error::TimescaleMismatch { .. }), "got {err:?}");
+	}
+
+	/// Samples are read front to back, so a run whose data_offset points anywhere but the next
+	/// sample is refused rather than sliced from the wrong bytes.
+	#[test]
+	fn decode_refuses_a_run_that_skips_bytes() {
+		use mp4_atom::{DecodeMaybe, Encode};
+
+		let timescale = moq_net::Timescale::MICRO;
+		let fragment = encode_fragment(info(1, timescale, 0), &[sample(0), sample(33_000)]).unwrap();
+
+		let mut cursor = std::io::Cursor::new(fragment.as_ref());
+		let Some(mp4_atom::Any::Moof(mut moof)) = mp4_atom::Any::decode_maybe(&mut cursor).unwrap() else {
+			panic!("a moof first");
+		};
+		let mdat = &fragment[cursor.position() as usize..];
+		let offset = moof.traf[0].trun[0].data_offset.as_mut().unwrap();
+		*offset += 1;
+
+		let mut skewed = Vec::new();
+		moof.encode(&mut skewed).unwrap();
+		skewed.extend_from_slice(mdat);
+
+		let err = decode(Bytes::from(skewed), None, timescale, Kind::Video).unwrap_err();
+		assert!(matches!(err, Error::InvalidDataOffset), "got {err:?}");
 	}
 
 	/// A frame timestamp the track carries at another scale anchors to the nearest tick, the way
@@ -1689,7 +1764,7 @@ mod tests {
 					base_media_decode_time: 2_000,
 				}),
 				trun: vec![mp4_atom::Trun {
-					data_offset: Some(0),
+					data_offset: None,
 					entries: vec![mp4_atom::TrunEntry {
 						size: None,
 						duration: None,

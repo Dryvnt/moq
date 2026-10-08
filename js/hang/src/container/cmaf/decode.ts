@@ -356,19 +356,38 @@ export function decodeDataSegment(
 		throw new Error("No data in mdat box");
 	}
 
+	// Samples are read from the mdat front to back, so each run must start where the previous one
+	// ended. A run's dataOffset counts from the moof's first byte (CMAF's default-base-is-moof).
+	if (tfhd?.baseDataOffset !== undefined) {
+		throw new Error("tfhd base_data_offset is unsupported: CMAF data offsets count from the moof");
+	}
+	let position = 0;
+	let moofStart: number | undefined;
+	let mdatDataStart: number | undefined;
+	for (const box of boxes) {
+		const size = box.largesize ?? box.size;
+		if (box.type === "moof") moofStart ??= position;
+		if (box === mdat) mdatDataStart = position + size - mdatData.byteLength;
+		position += size;
+	}
+	if (moofStart === undefined || mdatDataStart === undefined || mdatDataStart < moofStart) {
+		throw new Error("mdat must follow the moof");
+	}
+	const dataStart = mdatDataStart - moofStart;
+
 	const samples: Sample[] = [];
 	const ptss: number[] = [];
 
-	// trun.dataOffset is an offset from the base data offset (typically moof start) to the first sample.
-	// For simple CMAF segments where moof is followed immediately by mdat, this equals moof.size + 8.
-	// Since mdat.data is the mdat payload (excluding the 8-byte header), we need to compute the
-	// offset within mdatData. For now, we assume samples start at the beginning of mdat.data
-	// when dataOffset is not specified or when it points to the start of mdat payload.
-	// TODO: For complex cases with base_data_offset in tfhd, this needs additional handling.
 	let dataOffset = 0;
 	let decodeTime = baseDecodeTime;
 
 	for (const trun of truns) {
+		if (trun.dataOffset !== undefined && trun.dataOffset !== dataStart + dataOffset) {
+			throw new Error(
+				`trun data_offset ${trun.dataOffset} doesn't start at the next sample (${dataStart + dataOffset})`,
+			);
+		}
+
 		for (let i = 0; i < trun.sampleCount; i++) {
 			const sample: TrackRunSample = trun.samples[i] ?? {};
 
