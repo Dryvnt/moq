@@ -12,8 +12,8 @@ export class Format implements ContainerFormat {
 		this.#init = init;
 	}
 
-	/** Decode one CMAF fragment, presenting its earliest sample at the moq-net `timestamp`. */
-	decode(payload: Uint8Array, timestamp: Time.Timestamp): Frame[] {
+	/** Decode one CMAF fragment, presenting its earliest sample at the moq-net `timestamp`, or at `tfdt` if untimed. */
+	decode(payload: Uint8Array, timestamp: Time.Timestamp | undefined): Frame[] {
 		return decodeDataSegment(payload, this.#init, timestamp).map((s) => ({
 			payload: s.data,
 			timestamp: s.timestamp as Time.Micro,

@@ -685,7 +685,7 @@ async fn unusable_framerate_uses_the_standard_fallback_rate() {
 	let fragment = chunk_now(&mut exporter).await.fragment().expect("a media fragment");
 	assert_eq!(fragment.duration, std::time::Duration::from_secs_f64(1.0 / 30.0));
 	let timescale = moq_net::Timescale::new(90_000).unwrap();
-	let decoded = super::decode_at_tfdt(fragment.data, timescale, crate::container::fmp4::Kind::Video).unwrap();
+	let decoded = super::decode(fragment.data, None, timescale, crate::container::fmp4::Kind::Video).unwrap();
 	assert_eq!(decoded[0].duration.unwrap().as_scale(timescale), 3_000);
 }
 
@@ -1981,7 +1981,7 @@ async fn cmaf_source_exports_at_the_frame_timestamp() {
 	let mut frame = group
 		.create_frame(moq_net::frame::Info {
 			size: fragment.len() as u64,
-			timestamp: moq_net::Timestamp::from_secs(10).unwrap(),
+			timestamp: Some(moq_net::Timestamp::from_secs(10).unwrap()),
 		})
 		.unwrap();
 	frame.write(fragment).unwrap();
@@ -1993,14 +1993,14 @@ async fn cmaf_source_exports_at_the_frame_timestamp() {
 		.await
 		.expect("catalog consumer");
 	let mut exporter = crate::container::fmp4::Export::new(crate::source::announced(&consumer), catalog_stream)
-		.with_max_age(RECORDING_MAX_AGE);
+		.with_max_delay(RECORDING_MAX_DELAY);
 	let init = chunk_now(&mut exporter).await.init().expect("init");
 	let fragments = drain_now(&mut exporter).await;
 
 	let scale = moq_net::Timescale::new(timescale(&init).into()).unwrap();
 	let presented: Vec<u128> = fragments
 		.into_iter()
-		.flat_map(|fragment| super::decode_at_tfdt(fragment.data, scale, super::Kind::Video).unwrap())
+		.flat_map(|fragment| super::decode(fragment.data, None, scale, super::Kind::Video).unwrap())
 		.map(|sample| sample.timestamp.as_micros())
 		.collect();
 	assert_eq!(presented, [10_000_000, 10_066_000, 10_033_000]);

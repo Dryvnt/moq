@@ -1081,6 +1081,25 @@ test("Consumer with CmafFormat delivers correct timestamps", async () => {
 	consumer.close();
 });
 
+test("Consumer with CmafFormat times an untimed track from tfdt", async () => {
+	const track = new Track.Producer("test");
+	const consumer = new Consumer(replay(track), {
+		format: new CmafFormat(TEST_INIT),
+		maxDelay: 500 as Time.Milli,
+	});
+
+	const group = new Group.Producer(0);
+	group.writeFrame({ payload: cmafFrame(0xca, TIMESCALE, 0).payload });
+	group.writeFrame({ payload: cmafFrame(0xbe, TIMESCALE + 3000, 1).payload });
+	group.close();
+	track.writeGroup(group);
+	track.close();
+
+	const frames = await drainFrames(consumer, 200);
+	expect(frames.map((f) => f.timestamp)).toEqual([1_000_000, 1_033_333] as Time.Micro[]);
+	consumer.close();
+});
+
 test("CmafFormat decodes the per-sample duration", () => {
 	const format = new CmafFormat(TEST_INIT);
 	const segment = encodeDataSegment({

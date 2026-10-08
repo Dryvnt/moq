@@ -370,10 +370,11 @@ impl Container for Wire {
 /// `timestamp` is the moq-lite frame timestamp, which is the broadcast timeline: the fragment's
 /// earliest sample presents at it. `tfdt` and the `trun` offsets only place the samples relative
 /// to each other, since a publisher may move a passthrough track to another timeline without
-/// rewriting the payload.
+/// rewriting the payload. An untimed frame (`None`) has no broadcast time, so its samples
+/// present at the time `tfdt` gives them.
 pub(crate) fn decode(
 	data: Bytes,
-	timestamp: Timestamp,
+	timestamp: Option<Timestamp>,
 	timescale: moq_net::Timescale,
 	kind: Kind,
 ) -> Result<Vec<Frame>> {
@@ -405,7 +406,9 @@ pub(crate) fn decode(
 	// DTS, silently collapsing their timestamps, so reject that fragment instead.
 	let total_samples: usize = traf.trun.iter().map(|t| t.entries.len()).sum();
 
-	let anchor = timestamp.convert(timescale)?.value();
+	// Rounded the way `encode` stamps it, so a timestamp the track carried at another scale
+	// lands back on the tick it was written at.
+	let anchor = timestamp.map(|t| timestamp_ticks(t, timescale)).transpose()?;
 
 	let mut frames = Vec::new();
 	let mut ptss = Vec::with_capacity(total_samples);
@@ -449,7 +452,7 @@ pub(crate) fn decode(
 
 			frames.push(Frame {
 				// Placeholder until the earliest PTS is known.
-				timestamp,
+				timestamp: Timestamp::ZERO,
 				payload,
 				keyframe,
 				duration,
@@ -461,7 +464,10 @@ pub(crate) fn decode(
 		}
 	}
 
-	let earliest = ptss.iter().copied().min().unwrap_or_default();
+	let (anchor, earliest) = match anchor {
+		Some(anchor) => (anchor, ptss.iter().copied().min().unwrap_or_default()),
+		None => (0, 0),
+	};
 	for (frame, pts) in frames.iter_mut().zip(ptss) {
 		let ticks = u64::try_from(pts - earliest)
 			.ok()
@@ -1134,27 +1140,6 @@ pub(crate) fn sample_durations(fragment: &Bytes) -> Vec<Option<u32>> {
 		.collect()
 }
 
-/// Decode a standalone fragment at the timeline its own `tfdt` and `trun` carry, as it decodes
-/// when the publisher stamps the frame with the fragment's earliest presentation time.
-#[cfg(test)]
-pub(crate) fn decode_at_tfdt(data: Bytes, timescale: moq_net::Timescale, kind: Kind) -> Result<Vec<Frame>> {
-	let mut frames = decode(data.clone(), Timestamp::new(0, timescale)?, timescale, kind)?;
-
-	let traf = first_traf(&data);
-	let mut dts = i128::from(traf.tfdt.as_ref().ok_or(Error::NoTfdt)?.base_media_decode_time);
-	let mut earliest = i128::MAX;
-	for entry in traf.trun.iter().flat_map(|t| &t.entries) {
-		earliest = earliest.min(dts + i128::from(entry.cts.unwrap_or_default()));
-		dts += i128::from(entry.duration.or(traf.tfhd.default_sample_duration).unwrap_or(0));
-	}
-	let earliest = Timestamp::new(u64::try_from(earliest).map_err(|_| Error::PtsOverflow)?, timescale)?;
-
-	for frame in &mut frames {
-		frame.timestamp = frame.timestamp.checked_add(earliest)?;
-	}
-	Ok(frames)
-}
-
 #[cfg(test)]
 fn first_traf(fragment: &Bytes) -> mp4_atom::Traf {
 	use mp4_atom::DecodeMaybe;
@@ -1369,7 +1354,7 @@ mod tests {
 		.encode(&mut buf)
 		.unwrap();
 
-		let frames = decode_at_tfdt(Bytes::from(buf), timescale, Kind::Video).unwrap();
+		let frames = decode(Bytes::from(buf), None, timescale, Kind::Video).unwrap();
 		assert_eq!(frames.len(), 2);
 		assert_eq!(frames[0].timestamp, ts(0));
 		assert_eq!(frames[0].duration, Some(ts(33_333)));
@@ -1389,7 +1374,7 @@ mod tests {
 		}];
 
 		let fragment = encode_fragment(info(1, timescale, 0), &input).unwrap();
-		let frames = decode_at_tfdt(fragment, timescale, Kind::Video).unwrap();
+		let frames = decode(fragment, None, timescale, Kind::Video).unwrap();
 
 		assert_eq!(frames.len(), 1);
 		assert_eq!(frames[0].duration, Some(ts(33_333)));
@@ -1504,7 +1489,7 @@ mod tests {
 		];
 
 		let fragment = encode_fragment(info(1, timescale, 0), &input).unwrap();
-		let frames = decode_at_tfdt(fragment, timescale, Kind::Video).unwrap();
+		let frames = decode(fragment, None, timescale, Kind::Video).unwrap();
 
 		assert_eq!(frames.len(), input.len());
 		for (actual, expected) in frames.iter().zip(&input) {
@@ -1545,12 +1530,12 @@ mod tests {
 			.collect();
 		assert_eq!(flags, vec![0x0200_0000; 3]);
 
-		let audio = decode_at_tfdt(fragment.clone(), timescale, Kind::Audio).unwrap();
+		let audio = decode(fragment.clone(), None, timescale, Kind::Audio).unwrap();
 		assert!(
 			audio.iter().all(|frame| !frame.keyframe),
 			"audio never decodes a keyframe"
 		);
-		let video = decode_at_tfdt(fragment, timescale, Kind::Video).unwrap();
+		let video = decode(fragment, None, timescale, Kind::Video).unwrap();
 		assert!(
 			video.iter().all(|frame| frame.keyframe),
 			"the sync flag is a video keyframe"
@@ -1600,7 +1585,7 @@ mod tests {
 		let input = [sample(source), sample(source + 66_000), sample(source + 33_000)];
 		let fragment = encode_fragment(info(1, timescale, 0), &input).unwrap();
 
-		let frames = decode(fragment, ts(10_000_000), timescale, Kind::Video).unwrap();
+		let frames = decode(fragment, Some(ts(10_000_000)), timescale, Kind::Video).unwrap();
 		assert_eq!(micros(&frames), [10_000_000, 10_066_000, 10_033_000]);
 	}
 
@@ -1621,13 +1606,50 @@ mod tests {
 		wire.write(&mut group, &input).unwrap();
 
 		let frame = group.consume().read_frame().await.unwrap().unwrap();
-		assert_eq!(frame.timestamp.as_micros(), 33_000);
+		assert_eq!(frame.timestamp.unwrap().as_micros(), 33_000);
 
 		let frames = decode(frame.payload.clone(), frame.timestamp, timescale, Kind::Video).unwrap();
 		assert_eq!(micros(&frames), [100_000, 33_000, 66_000]);
 
-		let shifted = decode(frame.payload, ts(5_000_000), timescale, Kind::Video).unwrap();
+		let shifted = decode(frame.payload, Some(ts(5_000_000)), timescale, Kind::Video).unwrap();
 		assert_eq!(micros(&shifted), [5_067_000, 5_000_000, 5_033_000]);
+	}
+
+	/// An untimed track's frames carry no broadcast time, so their samples present at `tfdt`.
+	#[test]
+	fn an_untimed_fragment_decodes_at_its_tfdt() {
+		let mut config = VideoConfig::new(hang::catalog::VideoCodec::VP8);
+		config.coded_width = Some(320);
+		config.coded_height = Some(240);
+		let timescale = moq_net::Timescale::MICRO;
+		let wire = Wire::new(synthesize_video_trak(1, 1_000_000, &config, None).unwrap());
+
+		let broadcast = moq_net::broadcast::Info::new().produce();
+		let untimed = moq_net::track::Info::default().with_timescale(None);
+		let track = broadcast.create_track("video", untimed).unwrap();
+		let mut group = track.append_group().unwrap();
+		let source = 3_600_000_000;
+		let input = [sample(source), sample(source + 66_000), sample(source + 33_000)];
+		let fragment = encode_fragment(info(1, timescale, 0), &input).unwrap();
+		group.write_frame(None, fragment).unwrap();
+
+		let Poll::Ready(Ok(Some(frames))) = wire.poll_read(&mut group.consume(), &kio::Waiter::noop()) else {
+			panic!("the fragment is ready");
+		};
+		let source = u128::from(source);
+		assert_eq!(micros(&frames), [source, source + 66_000, source + 33_000]);
+	}
+
+	/// A frame timestamp the track carries at another scale anchors to the nearest tick, the way
+	/// `encode` stamps it.
+	#[test]
+	fn decode_rounds_the_frame_timestamp_to_the_nearest_tick() {
+		let timescale = moq_net::Timescale::new(90_000).unwrap();
+		let fragment = encode_fragment(info(1, timescale, 0), &[sample(0)]).unwrap();
+
+		// Tick 100 is 1111.1 µs, which a microsecond track truncates to 1111.
+		let frames = decode(fragment, Some(ts(1_111)), timescale, Kind::Video).unwrap();
+		assert_eq!(frames[0].timestamp, Timestamp::new(100, timescale).unwrap());
 	}
 
 	#[test]
@@ -1643,7 +1665,7 @@ mod tests {
 		}];
 
 		let fragment = encode_fragment(info(1, timescale, 0), &frames).unwrap();
-		let frames = decode_at_tfdt(fragment, timescale, Kind::Video).unwrap();
+		let frames = decode(fragment, None, timescale, Kind::Video).unwrap();
 
 		assert_eq!(frames.len(), 1);
 		assert_eq!(frames[0].duration, None);
@@ -1682,7 +1704,7 @@ mod tests {
 		moof.encode(&mut buf).unwrap();
 		mp4_atom::Mdat { data: vec![0xDE, 0xAD] }.encode(&mut buf).unwrap();
 
-		let frames = decode_at_tfdt(Bytes::from(buf), timescale, Kind::Video).unwrap();
+		let frames = decode(Bytes::from(buf), None, timescale, Kind::Video).unwrap();
 		assert_eq!(frames.len(), 1);
 		assert_eq!(frames[0].timestamp.as_micros(), 83_333);
 		assert_eq!(frames[0].duration, None);

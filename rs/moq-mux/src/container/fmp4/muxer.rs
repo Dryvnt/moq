@@ -385,7 +385,7 @@ mod tests {
 
 		// Decode it back: timestamps survive at the muxer's timescale (framerate * 1000).
 		let timescale = moq_net::Timescale::new(30_000).unwrap();
-		let decoded = super::super::decode_at_tfdt(fragment, timescale, crate::container::fmp4::Kind::Video).unwrap();
+		let decoded = super::super::decode(fragment, None, timescale, crate::container::fmp4::Kind::Video).unwrap();
 		assert_eq!(decoded.len(), 2);
 		assert_eq!(decoded[0].timestamp.as_micros(), 10_000_000);
 		assert!(decoded[0].keyframe);
@@ -573,8 +573,9 @@ mod tests {
 			keyframe: true,
 			duration: None,
 		};
-		let decoded = super::super::decode_at_tfdt(
+		let decoded = super::super::decode(
 			muxer.fragment(0, &[frame]).unwrap(),
+			None,
 			timescale,
 			crate::container::fmp4::Kind::Video,
 		)
@@ -603,8 +604,9 @@ mod tests {
 			keyframe: true,
 			duration: Some(Timestamp::from_scale(3_000, 90_000).unwrap()),
 		};
-		let decoded = super::super::decode_at_tfdt(
+		let decoded = super::super::decode(
 			muxer.fragment(0, &[frame]).unwrap(),
+			None,
 			timescale,
 			crate::container::fmp4::Kind::Video,
 		)
@@ -678,8 +680,9 @@ mod tests {
 			duration: None,
 		};
 
-		let decoded = super::super::decode_at_tfdt(
+		let decoded = super::super::decode(
 			muxer.fragment(0, &[frame]).unwrap(),
+			None,
 			timescale,
 			crate::container::fmp4::Kind::Video,
 		)
@@ -766,7 +769,7 @@ mod tests {
 		let fragment = muxer.fragment(0, &frames).unwrap();
 
 		let timescale = moq_net::Timescale::new(48_000).unwrap();
-		let decoded = super::super::decode_at_tfdt(fragment, timescale, crate::container::fmp4::Kind::Video).unwrap();
+		let decoded = super::super::decode(fragment, None, timescale, crate::container::fmp4::Kind::Video).unwrap();
 		assert_eq!(decoded.len(), 4);
 		for f in &decoded {
 			assert_eq!(
@@ -800,7 +803,7 @@ mod tests {
 		let fragment = muxer.fragment(0, &frames).unwrap();
 
 		let timescale = moq_net::Timescale::new(48_000).unwrap();
-		let decoded = super::super::decode_at_tfdt(fragment, timescale, crate::container::fmp4::Kind::Video).unwrap();
+		let decoded = super::super::decode(fragment, None, timescale, crate::container::fmp4::Kind::Video).unwrap();
 		let first = decoded[0].duration.unwrap().as_micros();
 		assert_eq!(first, 20_000, "the pause is a discontinuity, not a 2405 second sample");
 	}

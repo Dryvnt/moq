@@ -612,6 +612,7 @@ For a text track, the remainder is the cue in the track's declared `format` (for
 Each frame is a complete fragmented MP4 fragment (`moof`+`mdat`).
 The frame timestamp is the presentation time of the fragment's earliest sample; the fragment's own timestamps only place its samples relative to that sample.
 A consumer MUST present each sample at the frame timestamp plus its offset from the earliest sample, even when `tfdt` says otherwise.
+A frame on an untimed track has no timestamp, so its samples present at the fragment's own timestamps.
 Audio samples MUST be marked as sync samples, including samples inside a group.
 A sync sample does not declare an audio group boundary; the publisher chooses those boundaries.
 

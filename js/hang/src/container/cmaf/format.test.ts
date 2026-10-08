@@ -97,6 +97,18 @@ test("CmafFormat anchors the earliest sample across runs", () => {
 	expect(frames.map((f) => f.timestamp)).toEqual([66_667, 33_333] as Time.Micro[]);
 });
 
+// An untimed track's frames carry no broadcast time, so their samples present at `tfdt`.
+test("CmafFormat times an untimed fragment from its tfdt", () => {
+	const segment = fragment(TIMESCALE, [
+		[3000, 3000],
+		[3000, 6000],
+		[3000, 0],
+	]);
+
+	const frames = new Format(INIT).decode(segment, undefined);
+	expect(frames.map((f) => f.timestamp)).toEqual([1_033_333, 1_100_000, 1_066_667] as Time.Micro[]);
+});
+
 function at(ticks: number): Time.Timestamp {
 	return new Time.Timestamp(ticks, Time.Timescale(TIMESCALE));
 }

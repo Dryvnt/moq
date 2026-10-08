@@ -308,13 +308,19 @@ function extractAudioSpecificConfig(esds: Uint8Array): Uint8Array | undefined {
  * The moq-net `timestamp` is the broadcast timeline: the fragment's earliest sample presents at
  * it. `tfdt` and the composition offsets only place the samples relative to each other, since a
  * publisher may move a passthrough track to another timeline without rewriting the payload.
+ * An untimed frame (`undefined`) has no broadcast time, so its samples present at the time
+ * `tfdt` gives them.
  *
  * @param segment - The moof + mdat data
  * @param init - Parsed init segment (provides timescale and trex defaults)
- * @param timestamp - The moq-net frame timestamp carrying this segment
+ * @param timestamp - The moq-net frame timestamp carrying this segment, if its track is timed
  * @returns Array of decoded samples
  */
-export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timestamp: Time.Timestamp): Sample[] {
+export function decodeDataSegment(
+	segment: Uint8Array,
+	init: InitSegment,
+	timestamp: Time.Timestamp | undefined,
+): Sample[] {
 	// Cast to ParsedIsoBox[] since the library's return type changes with readers
 	const boxes = readIsoBoxes(toArrayBuffer(segment), { readers: DATA_READERS }) as ParsedIsoBox[];
 
@@ -413,9 +419,12 @@ export function decodeDataSegment(segment: Uint8Array, init: InitSegment, timest
 	}
 
 	// A loop, not `Math.min(...ptss)`: a long fragment's sample count can exceed the argument limit.
-	let earliest = Number.POSITIVE_INFINITY;
-	for (const pts of ptss) earliest = Math.min(earliest, pts);
-	const anchor = timestamp.asMicros();
+	let earliest = 0;
+	if (timestamp !== undefined) {
+		earliest = Number.POSITIVE_INFINITY;
+		for (const pts of ptss) earliest = Math.min(earliest, pts);
+	}
+	const anchor = timestamp?.asMicros() ?? 0;
 	for (const [i, sample] of samples.entries()) {
 		sample.timestamp = Math.round(anchor + ((ptss[i] - earliest) * 1_000_000) / init.timescale);
 	}

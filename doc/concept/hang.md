@@ -142,7 +142,8 @@ through when republishing the catalog.
 A CMAF frame's timestamp is its fragment's earliest presentation time, and the
 broadcast timeline: `tfdt` only places the samples relative to each other. A
 publisher can move a passthrough track to another timeline by changing the frame
-timestamp alone, without rewriting the fragment.
+timestamp alone, without rewriting the fragment. An untimed track's frames carry
+no timestamp, so their samples present at `tfdt`.
 
 A Legacy or LOC video publisher can close the last frame's duration with an empty
 codec payload whose timestamp is that frame's exclusive end. Consumers treat it
