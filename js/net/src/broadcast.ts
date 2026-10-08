@@ -189,7 +189,7 @@ function subscribe(
 	return subscriber;
 }
 
-async function resolveTrackInfo(state: BroadcastState, name: string): Promise<track.Info> {
+async function resolveTrackInfo(state: BroadcastState, name: string, hold?: AbortSignal): Promise<track.Info> {
 	const existing = lookup(state, name);
 	if (existing) return existing.info();
 
@@ -199,17 +199,23 @@ async function resolveTrackInfo(state: BroadcastState, name: string): Promise<tr
 	if (!state.served) return Promise.reject(new NotFound(`track ${name}`));
 
 	// A pending query is demand, as a pending track request is in Rust, though nobody subscribes.
+	// So is a held one, until `hold` aborts.
 	const producer = new track.Producer(name);
 	watchDemand(state, producer, true);
 	state.requested.mutate((requested) => {
 		requested.push(hooks.makeRequest({ name, producer, sequences: state.sequences, pending: state.pending }));
 	});
 
+	let info: track.Info;
 	try {
-		return await producer.info();
-	} finally {
+		info = await producer.info();
+	} catch (err) {
 		producer.close();
+		throw err;
 	}
+	if (hold && !hold.aborted) hold.addEventListener("abort", () => producer.close(), { once: true });
+	else producer.close();
+	return info;
 }
 
 // Serve a group from the local retained window by subscribing and scanning to the
@@ -363,7 +369,7 @@ export class Producer {
 	#wire(register: boolean): Wire {
 		return {
 			subscribe: (name, options) => subscribe(this.#state, name, options, register),
-			resolveTrackInfo: (name) => resolveTrackInfo(this.#state, name),
+			resolveTrackInfo: (name, hold) => resolveTrackInfo(this.#state, name, hold),
 			fetchGroup: (name, sequence, options) => fetchGroup(this.#state, name, sequence, options),
 			requested: () => requested(this.#state),
 		};
@@ -453,7 +459,7 @@ export class Consumer {
 		this.#state.consumers++;
 		registerWire(this, {
 			subscribe: (name, options) => subscribe(this.#state, name, options, true),
-			resolveTrackInfo: (name) => resolveTrackInfo(this.#state, name),
+			resolveTrackInfo: (name, hold) => resolveTrackInfo(this.#state, name, hold),
 			fetchGroup: (name, sequence, options) => fetchGroup(this.#state, name, sequence, options),
 			requested: () => requested(this.#state),
 		});

@@ -364,6 +364,51 @@ test("integration: lite draft-06", async () => {
 	await runPublishSubscribeFlow(Lite.ALPN_06);
 });
 
+// A subscriber learns a track's properties over a TRACK stream before it subscribes. The
+// publisher holds the track for that stream until the subscriber closes it, which it does once
+// its SUBSCRIBE is answered, so a publisher starting the track on demand sees one demand edge
+// per viewer rather than one for each stream with a gap in between.
+test.each([Lite.ALPN_05, Lite.ALPN_06, Lite.ALPN_07_WIP])(
+	"integration: %s demand holds across a subscription's TRACK and SUBSCRIBE",
+	async (protocol) => {
+		const pair = createMockTransportPair(protocol);
+		const origin = new OriginProducer();
+		const [client, server] = await Promise.all([
+			connect(url, { transport: pair.client }),
+			accept(pair.server, url, { publish: origin.consume() }),
+		]);
+
+		const broadcast = publish(origin, Path.from("test"));
+		const demand = broadcast.demand();
+		const edges: boolean[] = [];
+		const dispose = demand.used.subscribe((used) => edges.push(used));
+		const serving = (async () => {
+			for (;;) {
+				const request = await wireOf(broadcast).requested();
+				if (!request) return;
+				request.accept({ timescale: Timescale.MILLI }).writeString("hello");
+			}
+		})();
+
+		const remote = wireOf(client).consume(Path.from("test"));
+		const track = remote.track("video").subscribe().ordered();
+		expect(await track.readString()).toBe("hello");
+		await sleep(50);
+		expect(edges).toEqual([true]);
+
+		track.close();
+		await withTimeout(demand.unused(), 1000, "demand outlived the reader");
+		expect(edges).toEqual([true, false]);
+
+		dispose();
+		remote.close();
+		broadcast.close();
+		await serving;
+		client.abort();
+		server.abort();
+	},
+);
+
 test("integration: lite draft-06 announce lifecycle", async () => {
 	const pair = createMockTransportPair(Lite.ALPN_06);
 	const origin = new OriginProducer();

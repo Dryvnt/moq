@@ -1,7 +1,7 @@
 import { type Dispose, type Getter, race, Signal } from "@moq/signals";
 import type * as broadcast from "../broadcast.ts";
 import { Withdrawal } from "../connection/withdrawal.ts";
-import { error, NotFound, reason, StreamCode, StreamError } from "../error.ts";
+import { error, NotFound, ProtocolViolation, reason, StreamCode, StreamError } from "../error.ts";
 import type * as group from "../group.ts";
 import { Cost, type Hop, type Route, routesEqual } from "../hop.ts";
 import { hiddenBelow, hooks, presented } from "../internal.ts";
@@ -984,9 +984,13 @@ export class Publisher {
 	/**
 	 * Answers a TRACK stream (0x6) with a single TRACK_INFO, then FINs.
 	 *
+	 * The open stream is interest in the track, held until the requester closes its side,
+	 * so demand holds while the requester moves on to SUBSCRIBE. Only the reply is owed.
+	 *
 	 * @internal
 	 */
 	async runTrackInfo(msg: TrackMessage, stream: Stream) {
+		const hold = new AbortController();
 		try {
 			const front =
 				this.#publish &&
@@ -994,12 +998,21 @@ export class Publisher {
 					(await wireOf(this.#publish).demand(msg.broadcast, msg.epoch)));
 			if (!front) throw new NotFound(`broadcast ${msg.broadcast}`);
 
-			const info = await this.#resolveTrackInfo(front, msg.track);
+			const info = await this.#resolveTrackInfo(front, msg.track, hold.signal);
 			await info.encode(stream.writer, this.version);
 			console.debug(`track info: broadcast=${msg.broadcast} track=${msg.track}`);
-			stream.close();
+			stream.writer.close();
+			void stream.reader.done().then(
+				(fin) => {
+					hold.abort();
+					// TRACK is the requester's only message.
+					if (!fin) stream.abort(new ProtocolViolation("data after TRACK"));
+				},
+				() => hold.abort(),
+			);
 			await acknowledged(stream.writer);
 		} catch (err) {
+			hold.abort();
 			console.debug(`track unknown: broadcast=${msg.broadcast} track=${msg.track}`);
 			stream.writer.reset(error(err));
 		}
@@ -1008,8 +1021,9 @@ export class Publisher {
 	// Resolve (and cache) a track's immutable TRACK_INFO by asking the application.
 	// `resolveTrackInfo` triggers a TrackRequest the app answers with accept(TrackInfo);
 	// only the immutable properties are needed (not the groups). Cached because they're
-	// fixed for the track's lifetime. Rejects if the track is unavailable.
-	#resolveTrackInfo(front: broadcast.Consumer, track: string): Promise<TrackInfoMessage> {
+	// fixed for the track's lifetime. Rejects if the track is unavailable. `hold` keeps
+	// the request wanted until it aborts, when this call is the one that makes it.
+	#resolveTrackInfo(front: broadcast.Consumer, track: string, hold?: AbortSignal): Promise<TrackInfoMessage> {
 		let tracks = this.#trackInfo.get(front);
 		if (!tracks) {
 			tracks = new Map();
@@ -1020,7 +1034,7 @@ export class Publisher {
 		if (cached !== undefined) return cached;
 
 		const pending = (async () => {
-			const info = await wireOf(front).resolveTrackInfo(track);
+			const info = await wireOf(front).resolveTrackInfo(track, hold);
 			return new TrackInfoMessage({
 				priority: info.priority,
 				// Publisher Max Age: the publisher's retention bound, advertised so

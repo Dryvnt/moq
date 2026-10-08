@@ -1,0 +1,127 @@
+// An open Track Stream is interest in the track: the subscriber keeps it open until its
+// SUBSCRIBE is answered, and the publisher keeps the track wanted until the subscriber closes it.
+import { describe, expect, test } from "bun:test";
+import { randomHop } from "../hop.ts";
+import { createMockTransportPair } from "../mock.ts";
+import { Producer as OriginProducer } from "../origin.ts";
+import * as Path from "../path.ts";
+import { Stream } from "../stream.ts";
+import { Milli, Timescale } from "../time.ts";
+import { wireOf } from "../wire.ts";
+import { Publisher } from "./publisher.ts";
+import { StreamId } from "./stream.ts";
+import { encodeSubscribeResponse, Subscribe, SubscribeStart } from "./subscribe.ts";
+import { Subscriber } from "./subscriber.ts";
+import { TrackInfo, Track as TrackMessage } from "./track.ts";
+import { ALPN_05, Version } from "./version.ts";
+
+/** Whether `promise` settles within `ms`. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const pending = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), ms);
+	});
+	try {
+		return await Promise.race([promise.then(() => true), pending]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+describe.each([Version.DRAFT_05, Version.DRAFT_06, Version.DRAFT_07])("%s", (version) => {
+	/** A subscriber whose publisher the test plays by hand, up to the SUBSCRIBE. */
+	async function subscribing() {
+		const pair = createMockTransportPair(ALPN_05);
+		const subscriber = new Subscriber(pair.client, version, randomHop());
+		const reader = subscriber.consume(Path.from("room")).track("video").subscribe({ maxDelay: Milli(100) });
+
+		const track = await Stream.accept(pair.server, version);
+		if (!track) throw new Error("the subscriber never asked for TRACK_INFO");
+		expect(await track.reader.u53()).toBe(StreamId.Track);
+		await TrackMessage.decode(track.reader, version);
+		await new TrackInfo({}).encode(track.writer, version);
+		track.writer.close();
+
+		const sub = await Stream.accept(pair.server, version);
+		if (!sub) throw new Error("the subscriber never subscribed");
+		expect(await sub.reader.u53()).toBe(StreamId.Subscribe);
+		await Subscribe.decode(sub.reader, version);
+		return { subscriber, reader, track, sub };
+	}
+
+	test("a subscription holds its TRACK stream until the SUBSCRIBE is answered", async () => {
+		const { subscriber, reader, track, sub } = await subscribing();
+		const fin = track.reader.done();
+		expect(await settlesWithin(fin, 50)).toBe(false);
+
+		await encodeSubscribeResponse(sub.writer, { start: new SubscribeStart(0) }, version);
+		expect(await fin).toBe(true);
+
+		reader.close();
+		subscriber.close();
+	});
+
+	test("a subscription that ends unanswered closes its TRACK stream", async () => {
+		const { subscriber, reader, track } = await subscribing();
+		const fin = track.reader.done();
+		expect(await settlesWithin(fin, 50)).toBe(false);
+
+		reader.close();
+		expect(await fin).toBe(true);
+		subscriber.close();
+	});
+
+	test("an info query closes its TRACK stream once answered", async () => {
+		const pair = createMockTransportPair(ALPN_05);
+		const subscriber = new Subscriber(pair.client, version, randomHop());
+		const info = subscriber.consume(Path.from("room")).track("video").info();
+
+		const track = await Stream.accept(pair.server, version);
+		if (!track) throw new Error("the subscriber never asked for TRACK_INFO");
+		expect(await track.reader.u53()).toBe(StreamId.Track);
+		await TrackMessage.decode(track.reader, version);
+		await new TrackInfo({ priority: 3 }).encode(track.writer, version);
+		track.writer.close();
+
+		expect((await info).priority).toBe(3);
+		expect(await track.reader.done()).toBe(true);
+		subscriber.close();
+	});
+
+	test.each(["FIN", "reset"] as const)(
+		"an answered TRACK stream keeps the track wanted until the requester's %s",
+		async (close) => {
+			const pair = createMockTransportPair(ALPN_05);
+			const origin = new OriginProducer();
+			const publisher = new Publisher(pair.server, version, randomHop(), origin.consume());
+			const broadcast = origin.createBroadcast(Path.from("room"));
+			broadcast.announce();
+			const demand = broadcast.demand();
+			const serving = (async () => {
+				for (;;) {
+					const request = await wireOf(broadcast).requested();
+					if (!request) return;
+					request.accept({ timescale: Timescale.MILLI });
+				}
+			})();
+
+			const client = await Stream.open(pair.client, { version });
+			const server = await Stream.accept(pair.server, version);
+			if (!server) throw new Error("the publisher never accepted the TRACK stream");
+			void publisher.runTrackInfo(new TrackMessage(Path.from("room"), "video"), server);
+
+			await TrackInfo.decode(client.reader, version);
+			expect(await client.reader.done()).toBe(true);
+			expect(await settlesWithin(demand.unused(), 50)).toBe(false);
+
+			if (close === "FIN") client.writer.close();
+			else client.writer.reset(new Error("gone"));
+			expect(await settlesWithin(demand.unused(), 1000)).toBe(true);
+
+			publisher.close();
+			broadcast.close();
+			await serving;
+			origin.close();
+		},
+	);
+});
