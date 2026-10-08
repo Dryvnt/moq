@@ -75,6 +75,15 @@ function acknowledged(writer: Writer): Promise<void> {
 	return writer.closed.catch(() => {});
 }
 
+/** A track's cached TRACK_INFO, and the request behind it while TRACK streams hold it. */
+interface TrackInfoEntry {
+	info: Promise<TrackInfoMessage>;
+	/** The open TRACK streams holding the request. */
+	holders: number;
+	/** Lets the request go, once its last holder closes. */
+	release: AbortController;
+}
+
 /** What {@link Publisher.openGroup} and {@link Publisher.serveGroup} need to serve one group. */
 interface RunGroup {
 	/** The subscription ID. */
@@ -386,7 +395,7 @@ export class Publisher {
 	// routing front rather than the path: immutability holds for one broadcast, and a
 	// republish puts a different one on the path, so its entries must not be reused.
 	// A rejected lookup is evicted so a retry can re-probe.
-	#trackInfo = new WeakMap<broadcast.Consumer, Map<string, Promise<TrackInfoMessage>>>();
+	#trackInfo = new WeakMap<broadcast.Consumer, Map<string, TrackInfoEntry>>();
 
 	/**
 	 * Creates a new Publisher instance.
@@ -991,6 +1000,16 @@ export class Publisher {
 	 */
 	async runTrackInfo(msg: TrackMessage, stream: Stream) {
 		const hold = new AbortController();
+		// Watched from the start, so a requester leaving while the reply is still blocked on
+		// flow control lets go of the track too.
+		void stream.reader.done().then(
+			(fin) => {
+				hold.abort();
+				// TRACK is the requester's only message.
+				if (!fin) stream.abort(new ProtocolViolation("data after TRACK"));
+			},
+			() => hold.abort(),
+		);
 		try {
 			const front =
 				this.#publish &&
@@ -1002,14 +1021,6 @@ export class Publisher {
 			await info.encode(stream.writer, this.version);
 			console.debug(`track info: broadcast=${msg.broadcast} track=${msg.track}`);
 			stream.writer.close();
-			void stream.reader.done().then(
-				(fin) => {
-					hold.abort();
-					// TRACK is the requester's only message.
-					if (!fin) stream.abort(new ProtocolViolation("data after TRACK"));
-				},
-				() => hold.abort(),
-			);
 			await acknowledged(stream.writer);
 		} catch (err) {
 			hold.abort();
@@ -1021,8 +1032,9 @@ export class Publisher {
 	// Resolve (and cache) a track's immutable TRACK_INFO by asking the application.
 	// `resolveTrackInfo` triggers a TrackRequest the app answers with accept(TrackInfo);
 	// only the immutable properties are needed (not the groups). Cached because they're
-	// fixed for the track's lifetime. Rejects if the track is unavailable. `hold` keeps
-	// the request wanted until it aborts, when this call is the one that makes it.
+	// fixed for the track's lifetime. Rejects if the track is unavailable. Each `hold`
+	// keeps the request wanted until it aborts, so one TRACK stream closing never lets it
+	// go under another; once let go, a cached answer holds nothing.
 	#resolveTrackInfo(front: broadcast.Consumer, track: string, hold?: AbortSignal): Promise<TrackInfoMessage> {
 		let tracks = this.#trackInfo.get(front);
 		if (!tracks) {
@@ -1030,26 +1042,47 @@ export class Publisher {
 			this.#trackInfo.set(front, tracks);
 		}
 
-		const cached = tracks.get(track);
-		if (cached !== undefined) return cached;
+		let entry = tracks.get(track);
+		if (!entry) {
+			const release = new AbortController();
+			const info = (async () => {
+				const info = await wireOf(front).resolveTrackInfo(track, release.signal);
+				return new TrackInfoMessage({
+					priority: info.priority,
+					// Publisher Max Age: the publisher's retention bound, advertised so
+					// relays re-serve with the same window.
+					maxAge: info.maxAge,
+					// Lite05 mandates per-frame timestamps. Advertise the track's timescale;
+					// `#serveGroup` emits each frame converted to it.
+					timescale: wireTimescale(info),
+				});
+			})();
 
-		const pending = (async () => {
-			const info = await wireOf(front).resolveTrackInfo(track, hold);
-			return new TrackInfoMessage({
-				priority: info.priority,
-				// Publisher Max Age: the publisher's retention bound, advertised so
-				// relays re-serve with the same window.
-				maxAge: info.maxAge,
-				// Lite05 mandates per-frame timestamps. Advertise the track's timescale;
-				// `#serveGroup` emits each frame converted to it.
-				timescale: wireTimescale(info),
-			});
-		})();
+			entry = { info, holders: 0, release };
+			const created = entry;
+			info.then(
+				// Nothing held the request while it resolved (a FETCH's lookup), so let it go.
+				() => {
+					if (created.holders === 0) release.abort();
+				},
+				// Don't poison the cache on failure: a later request may succeed.
+				() => tracks.delete(track),
+			);
+			tracks.set(track, entry);
+		}
 
-		// Don't poison the cache on failure: a later request may succeed.
-		pending.catch(() => tracks.delete(track));
-		tracks.set(track, pending);
-		return pending;
+		if (hold && !hold.aborted && !entry.release.signal.aborted) {
+			const held = entry;
+			held.holders++;
+			hold.addEventListener(
+				"abort",
+				() => {
+					if (--held.holders === 0) held.release.abort();
+				},
+				{ once: true },
+			);
+		}
+		return entry.info;
 	}
 
 	/**

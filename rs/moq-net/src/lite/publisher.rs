@@ -1172,7 +1172,14 @@ impl<S: crate::transport::poll::Session, R: Request<S>> RequestServe<S, R> {
 				}
 				RequestState::Hold { finished, acked, .. } => {
 					if !*finished {
-						ready!(stream.writer.poll_flush(&mut cx))?;
+						// A reply blocked on flow control may never unblock, so a requester
+						// leaving before it is out cancels it and lets go of the request.
+						if stream.writer.poll_flush(&mut cx)?.is_pending() {
+							let closed = ready!(self.poll_requester(&mut cx));
+							self.state = RequestState::Finish { finished: false };
+							closed?;
+							return Poll::Ready(Err(Error::Cancel));
+						}
 						stream.writer.finish()?;
 						*finished = true;
 					}
@@ -3905,7 +3912,7 @@ mod serve_group_test {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::lite::test_transport::{Close, ScriptedSession, SinkSession};
+	use crate::lite::test_transport::{Close, ScriptedSession, SinkSend, SinkSession};
 	use crate::model::ProduceTest;
 	use futures::FutureExt;
 
@@ -4392,70 +4399,81 @@ mod tests {
 	}
 
 	/// An answered TRACK stream holds its track until the requester closes its side, by
-	/// FIN or reset, and the hold owes nothing a draining close would wait for.
+	/// FIN or reset, and the hold owes nothing a draining close would wait for. A requester
+	/// that leaves while the reply is still blocked on flow control lets the track go too.
 	#[moq_net_sim::test]
 	async fn an_answered_track_stream_holds_the_track_until_the_requester_closes() {
 		for version in [Version::Lite05, Version::Lite06, Version::Lite07] {
 			for close in [Close::Fin, Close::Reset] {
-				let case = format!("{version:?}, {close:?}");
-				let origin = crate::origin::Config::new(crate::Hop::new(1).unwrap()).produce();
-				let broadcast = origin.create_broadcast("room").unwrap();
-				let track = broadcast.create_track("video", None).unwrap();
-				broadcast.announce(Default::default()).unwrap();
+				for blocked in [false, true] {
+					let case = format!("{version:?}, {close:?}, blocked {blocked}");
+					let origin = crate::origin::Config::new(crate::Hop::new(1).unwrap()).produce();
+					let broadcast = origin.create_broadcast("room").unwrap();
+					let track = broadcast.create_track("video", None).unwrap();
+					broadcast.announce(Default::default()).unwrap();
 
-				let peer_setup = crate::lite::PeerSetup::default();
-				peer_setup.set(crate::lite::Setup::default());
-				let (_, goaway) = crate::goaway::Handle::new(true);
-				let publisher = Publisher::new(PublisherConfig {
-					runtime: crate::time::Clock::sim(),
-					session: ScriptedSession::new(Vec::new()),
-					origin: origin.consume(),
-					version,
-					peer_setup,
-					goaway,
-					peer_hop: None,
-					subscriptions: Default::default(),
-				});
+					let peer_setup = crate::lite::PeerSetup::default();
+					peer_setup.set(crate::lite::Setup::default());
+					let (_, goaway) = crate::goaway::Handle::new(true);
+					let publisher = Publisher::new(PublisherConfig {
+						runtime: crate::time::Clock::sim(),
+						session: ScriptedSession::new(Vec::new()),
+						origin: origin.consume(),
+						version,
+						peer_setup,
+						goaway,
+						peer_hop: None,
+						subscriptions: Default::default(),
+					});
 
-				let mut script = Vec::new();
-				lite::Track {
-					epoch: None,
-					broadcast: crate::Path::new("room"),
-					track: "video".into(),
-				}
-				.encode(&mut crate::coding::Encoder::new(&mut script, version.into()), version)
-				.unwrap();
-				let mut session = ScriptedSession::new(script);
-				let (send, recv) = futures::future::poll_fn(|cx| {
-					<ScriptedSession as crate::transport::poll::Session>::poll_open_bi(&mut session, cx)
-				})
-				.await
-				.unwrap();
-				let stream = Stream::<ScriptedSession, Version> {
-					writer: Writer::new(send, version),
-					reader: crate::coding::Reader::new(recv, version),
-				};
-				let mut serve = RequestServe::<_, TrackInfoServe>::new(publisher.shared.clone(), stream);
-
-				assert!(!drive(&mut serve).await, "{case}: ended before the requester closed");
-				assert!(
-					matches!(serve.state, RequestState::Hold { finished: true, .. }),
-					"{case}: TRACK_INFO was not sent"
-				);
-				assert!(track.demand().is_used(), "{case}: the track was let go");
-				assert_eq!(
-					publisher.shared.owed.load(Ordering::Relaxed),
-					0,
-					"{case}: the hold owes"
-				);
-
-				session.close(close);
-				assert!(drive(&mut serve).await, "{case}: still holding");
-				moq_net_sim::timeout(Duration::from_millis(1), track.demand().unused())
-					.await
-					.unwrap_or_else(|_| panic!("{case}: the track is still wanted"))
+					let mut script = Vec::new();
+					lite::Track {
+						epoch: None,
+						broadcast: crate::Path::new("room"),
+						track: "video".into(),
+					}
+					.encode(&mut crate::coding::Encoder::new(&mut script, version.into()), version)
 					.unwrap();
-				assert!(session.log.resets().is_empty(), "{case}: {:?}", session.log.resets());
+					let mut session = ScriptedSession::new(script);
+					let (_, recv) = futures::future::poll_fn(|cx| {
+						<ScriptedSession as crate::transport::poll::Session>::poll_open_bi(&mut session, cx)
+					})
+					.await
+					.unwrap();
+					// A closed gate is a reply blocked on flow control, never reopened.
+					let gate = kio::Producer::new(!blocked);
+					let stream = Stream::<ScriptedSession, Version> {
+						writer: Writer::new(SinkSend::gated(session.log.clone(), gate.consume()), version),
+						reader: crate::coding::Reader::new(recv, version),
+					};
+					let mut serve = RequestServe::<_, TrackInfoServe>::new(publisher.shared.clone(), stream);
+
+					assert!(!drive(&mut serve).await, "{case}: ended before the requester closed");
+					assert!(
+						matches!(serve.state, RequestState::Hold { finished, .. } if finished != blocked),
+						"{case}: TRACK_INFO was not answered as expected"
+					);
+					assert!(track.demand().is_used(), "{case}: the track was let go");
+					assert_eq!(
+						publisher.shared.owed.load(Ordering::Relaxed),
+						usize::from(blocked),
+						"{case}: only an undelivered reply owes"
+					);
+
+					session.close(close);
+					assert!(drive(&mut serve).await, "{case}: still holding");
+					moq_net_sim::timeout(Duration::from_millis(1), track.demand().unused())
+						.await
+						.unwrap_or_else(|_| panic!("{case}: the track is still wanted"))
+						.unwrap();
+					// The incomplete reply is cancelled; a delivered one is not.
+					assert_eq!(
+						session.log.resets().is_empty(),
+						!blocked,
+						"{case}: {:?}",
+						session.log.resets()
+					);
+				}
 			}
 		}
 	}

@@ -604,13 +604,15 @@ export class Subscriber {
 			request.reject(e);
 			this.#subscribes.delete(id);
 			console.warn(`subscribe error: id=${id} broadcast=${broadcast} track=${request.name} error=${reason(e)}`);
-			// If the streams eventually open after the timeout, close them so we
-			// don't leak them. Cover both branches: setup may resolve late, or it
-			// may reject (e.g. encode/decode failure) after a stream is open.
+			// Close the streams open now, since a write blocked on flow control may never let
+			// setup settle, and any that open after the timeout once it does. Cover both
+			// branches: setup may resolve late, or it may reject (e.g. encode/decode failure)
+			// after a stream is open.
 			const leave = () => {
 				state.stream?.abort(e);
 				state.track?.close();
 			};
+			leave();
 			setup.then(leave, leave);
 			return;
 		}
