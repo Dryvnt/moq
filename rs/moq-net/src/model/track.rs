@@ -753,9 +753,10 @@ impl TrackState {
 
 	/// Expire an ended track's idle groups, whose closed channel refuses the write
 	/// [`Self::evict_expired_scan`] takes: abort them in place, releasing their frames,
-	/// and leave the slots, which every read path already skips. A group still shared with a
-	/// live track (a warm copy adopts the relay copy's groups) is left to that track, whose
-	/// own eviction keeps its latest group.
+	/// and leave the slots, which every read path already skips. A group another handle
+	/// still owns (a warm copy shares the relay copy's) is left to that owner, which keeps
+	/// it while it is a live track's latest; a later sweep retries it once this track holds
+	/// the last handle.
 	pub(super) fn expire_closed(&self, scan: ExpiryScan) {
 		for (sequence, stamp) in &self.evict {
 			let Some(slot) = self.lookup.get(sequence) else {
@@ -7277,6 +7278,43 @@ mod test {
 			stale_finished.peek_group(0).is_none(),
 			"a sealed track's latest expired"
 		);
+	}
+
+	/// A group two ended tracks share expires once one of them lets go. Until then each
+	/// sees the other's handle, so neither aborts it for both.
+	#[tokio::test]
+	async fn closed_tracks_sharing_a_group_expire_it_once_one_lets_go() {
+		let pool = cache::Pool::new(cache::Config::default().with_expiry(Duration::from_secs(1)));
+
+		let first = track_producer_pooled("first", pool.clone());
+		let group = first.append_group().unwrap();
+		group.finish().unwrap();
+		let mut second = track_producer_pooled("second", pool.clone());
+		second.adopt_group(group.clone(), true).unwrap();
+		drop(group);
+
+		first.finish().unwrap();
+		second.finish().unwrap();
+		let stale_first = first.consume();
+		let stale_second = second.consume();
+		drop((first, second));
+
+		// The first pass dates the activity it has not seen yet; the next one expires it.
+		let sweep = || {
+			for _ in 0..2 {
+				crate::model::clock::advance(Duration::from_secs(2));
+				pool.sweep();
+			}
+		};
+		sweep();
+		assert!(
+			stale_second.peek_group(0).is_some(),
+			"a shared group outlives the sweep"
+		);
+
+		drop(stale_first);
+		sweep();
+		assert!(stale_second.peek_group(0).is_none(), "the last owner expires it");
 	}
 
 	/// An abort after every group below the declared end finished leaves the end standing.
