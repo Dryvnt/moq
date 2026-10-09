@@ -753,7 +753,9 @@ impl TrackState {
 
 	/// Expire an ended track's idle groups, whose closed channel refuses the write
 	/// [`Self::evict_expired_scan`] takes: abort them in place, releasing their frames,
-	/// and leave the slots, which every read path already skips.
+	/// and leave the slots, which every read path already skips. A group still shared with a
+	/// live track (a warm copy adopts the relay copy's groups) is left to that track, whose
+	/// own eviction keeps its latest group.
 	pub(super) fn expire_closed(&self, scan: ExpiryScan) {
 		for (sequence, stamp) in &self.evict {
 			let Some(slot) = self.lookup.get(sequence) else {
@@ -766,7 +768,7 @@ impl TrackState {
 					.cache_accessed_tick(scan.gc.then_some(scan.now))
 					.is_some_and(|tick| scan.now.saturating_sub(tick) > scan.max_ticks)
 			{
-				let _ = slot.group.clone().abort(Error::Old);
+				let _ = slot.group.abort_if_last(Error::Old);
 			}
 		}
 	}
