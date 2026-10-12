@@ -6117,7 +6117,7 @@ mod test {
 	/// groups an abort would otherwise let them drain.
 	#[test]
 	fn an_answer_below_the_cache_regresses() {
-		let mut producer = track_producer("test", None);
+		let mut producer = track_producer("test", Info::timed());
 		append_at(&mut producer, 0);
 		append_at(&mut producer, 100);
 		let mut open = producer.append_group().unwrap();

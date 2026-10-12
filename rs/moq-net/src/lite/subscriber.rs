@@ -2413,6 +2413,7 @@ mod tests {
 			subscriber,
 			path: Path::new("room/host").to_owned(),
 			epoch: None,
+			source: crate::broadcast::Info::new().produce(),
 			name: "audio".to_string(),
 		};
 

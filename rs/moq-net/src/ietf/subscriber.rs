@@ -1965,7 +1965,14 @@ where
 		};
 		loop {
 			let Some(idle) = self
-				.subscribe_once(&broadcast_path, &track_name, &source, target, &mut group_fetches, &mut gate)
+				.subscribe_once(
+					&broadcast_path,
+					&track_name,
+					&source,
+					target,
+					&mut group_fetches,
+					&mut gate,
+				)
 				.await
 			else {
 				return;
@@ -5542,9 +5549,10 @@ mod tests {
 			let request = dynamic.requested_track().await.expect("no track requested");
 
 			let mut fetch = None;
+			let source = producer.clone();
 			let serving = match kind {
 				Allocated::Subscribe => moq_net_sim::spawn(async move {
-					subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+					subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 				}),
 				Allocated::TrackStatus => moq_net_sim::spawn(async move {
 					assert!(
@@ -5993,8 +6001,9 @@ mod tests {
 			let request = dynamic.requested_track().await.expect("no track requested");
 
 			let probe = subscriber.clone();
+			let source = producer.clone();
 			let serving = moq_net_sim::spawn(async move {
-				subscriber.run_subscribe(Path::new("broadcast"), dynamic, request).await;
+				subscriber.run_subscribe(Path::new("broadcast"), source, request).await;
 			});
 			settle().await;
 			let _subscription = track.subscribe(None);
