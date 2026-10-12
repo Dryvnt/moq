@@ -16,8 +16,9 @@ internal clock drives `Producer::clock()`, `timestamp(None)`, the json and
 binary data tracks' stamping, and importer offsets (`Producer::anchor`), so
 it disagrees with the mapping the catalog advertises. `Clock::at(Instant,
 SystemTime)` can express the mapping, but the caller has to invent an
-`Instant` for the input's PTS zero, which fails when that zero predates this
-host's monotonic clock.
+`Instant` for the input's PTS zero (`Instant::now() - (SystemTime::now() -
+wall)`), and on Windows, whose `Instant` cannot go below its origin, that
+subtraction fails for a PTS zero before the host's boot.
 
 Non-goals: moving moq-transcode (`populate` in
 `rs/moq-transcode/src/catalog.rs` sets `out.clock = source.clock`) onto the
