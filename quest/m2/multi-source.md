@@ -58,6 +58,14 @@ one may be enough.
    one catalog list renditions from several broadcasts, but still as
    alternatives, so this option needs some grouping key too.
 
+The two are not independent: grouping (which renditions are alternatives of
+one source) is one axis, and placement (whether a rendition lives in this
+broadcast or a referenced one) is another. Per-rendition `broadcast`
+references already work inside any grouping, and placement alone solves
+neither selection nor per-source presentation. Consider the minimal
+candidate too: one grouping model that covers both local and referenced
+renditions, with an explicit policy for legacy readers.
+
 For each option, record: the wire and draft change; old readers' behaviour on
 a new catalog (does a released player silently play camera and screen as ABR
 rungs?); the cost across `rs/hang`, `js/hang`, js/watch, js/publish, moq-cli,
