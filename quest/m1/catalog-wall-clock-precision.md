@@ -29,10 +29,10 @@ and splitting that `total` into seconds and nanos cannot recover it. Sum
 `wall_scale * pts_scale` with checked `u128` arithmetic, keep the
 JSON-safe-range check on the wall's own units, and floor once when building
 the `Duration` from seconds plus nanos (keeping the existing
-`TimestampOverflow` for a wall `SystemTime` cannot reach). An instant finer
-than a nanosecond is floored (decided 2026-10-12: refusing it would break ordinary 48 kHz and
-90 kHz pts), and say so in both `wall_clock` docs instead of "rather than
-truncating".
+`TimestampOverflow` for a wall `SystemTime` cannot reach). Floor an
+instant finer than a nanosecond (decided 2026-10-12: refusing it would break
+ordinary 48 kHz and 90 kHz pts), and say so in both `wall_clock` docs
+instead of "rather than truncating".
 
 Tests: a whole-microsecond `wall` with a sub-millisecond part round-trips,
 `moq_mux::Clock::at(epoch, wall)` → `wall_clock(ZERO)` gives back `wall`;
