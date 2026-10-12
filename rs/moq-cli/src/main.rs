@@ -304,14 +304,7 @@ async fn main() -> anyhow::Result<()> {
 		match stages.remove(0) {
 			Command::Auth(auth) => {
 				cli.reject("auth")?;
-				// `serve` never returns on its own, and a container runs `moq` as PID 1,
-				// where a signal without a handler is dropped. `biased` installs the
-				// handlers before `serve` logs that it is listening.
-				return tokio::select! {
-					biased;
-					res = shutdown_signal() => res,
-					res = auth.run() => res,
-				};
+				return auth.run().await;
 			}
 			Command::Completion(completion) => {
 				cli.reject("completion")?;
