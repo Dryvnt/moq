@@ -21,18 +21,25 @@ Decided 2026-10-12: split from
 [the mux clock constructor](/quest/m1/mux-clock-from-wall.md); the two are
 independent.
 
-Compute whole seconds and the remainder from `total` and the scale, and
-build the `Duration` from seconds plus nanos (checked, keeping the existing
-`TimestampOverflow` for a wall `SystemTime` cannot reach). A wall in a
-timescale like 90 kHz names instants finer than a nanosecond; floor that
-remainder (decided 2026-10-12: refusing it would break ordinary 48 kHz and
+Combine the wall and pts as exact rationals before rounding anything:
+today `pts.as_scale(wall.scale())` floors first, so a 90 kHz tick on a
+microsecond wall loses 111 ns and a 1 µs pts on a millisecond wall vanishes,
+and splitting that `total` into seconds and nanos cannot recover it. Sum
+`wall.value() * pts_scale + pts.value() * wall_scale` over
+`wall_scale * pts_scale` with checked `u128` arithmetic, keep the
+JSON-safe-range check on the wall's own units, and floor once when building
+the `Duration` from seconds plus nanos (keeping the existing
+`TimestampOverflow` for a wall `SystemTime` cannot reach). An instant finer
+than a nanosecond is floored (decided 2026-10-12: refusing it would break ordinary 48 kHz and
 90 kHz pts), and say so in both `wall_clock` docs instead of "rather than
 truncating".
 
 Tests: a whole-microsecond `wall` with a sub-millisecond part round-trips,
 `moq_mux::Clock::at(epoch, wall)` → `wall_clock(ZERO)` gives back `wall`;
-the existing cross-timescale cases still hold; a 90 kHz value floors to the
-nanosecond.
+the existing cross-timescale cases still hold; fractional cross-timescale
+cases keep their precision (one 90 kHz tick on a microsecond wall is
+11,111 ns, a 1 µs pts on a millisecond wall adds 1,000 ns) and floor only at
+the nanosecond.
 
 Public API: none (behavior fix). Wire: none.
 

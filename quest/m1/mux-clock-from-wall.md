@@ -2,9 +2,9 @@
 
 ## Goal
 
-`moq_mux::Clock::from_wall(hang::catalog::Clock)` is public and works on
-wasm, so a derivative broadcast (a transcode ladder, or one assembled from
-other broadcasts) builds its catalog with
+`moq_mux::Clock::from_wall(hang::catalog::Clock)` is public, so a
+derivative broadcast (a transcode ladder, or one assembled from other
+broadcasts) builds its catalog with
 `Config::with_clock(Clock::from_wall(input_clock)?)` and re-advertises its
 input's wall mapping exactly. Requested downstream.
 
@@ -16,15 +16,21 @@ internal clock drives `Producer::clock()`, `timestamp(None)`, the json and
 binary data tracks' stamping, and importer offsets (`Producer::anchor`), so
 it disagrees with the mapping the catalog advertises. `Clock::at(Instant,
 SystemTime)` can express the mapping, but the caller has to invent an
-`Instant` for the input's PTS zero (which fails when that zero predates this
-host's monotonic clock), and `at` refuses native instants in the browser.
+`Instant` for the input's PTS zero, which fails when that zero predates this
+host's monotonic clock.
 
 Non-goals: moving moq-transcode (`populate` in
 `rs/moq-transcode/src/catalog.rs` sets `out.clock = source.clock`) onto the
 new constructor, which is a follow-up; the sub-millisecond loss in
 `hang::catalog::Clock::wall_clock`, owned by
 [its own quest](/quest/m1/catalog-wall-clock-precision.md); JS publishers,
-which already emit microsecond walls.
+which already emit microsecond walls; browser support. Every
+`moq_mux::Clock` reads `SystemTime::now()`, which panics in the browser, so
+none works there today (moq-mux is only compile-checked for wasm32).
+Browser wall time comes with [moq-net on moq-time](/quest/m1/time/net.md),
+whose ambient clock `from_wall` picks up along with `placed` and `arrival`
+(decided 2026-10-12 from review, over adding a browser wall source here or
+waiting on moq-time).
 
 ## Plan
 
@@ -35,10 +41,10 @@ Decided 2026-10-12:
   anchors the monotonic instant at the call), which a `TryFrom` would hide.
   `placed` and `arrival` stay `pub(crate)`.
 - Build it on `placed`'s approach: anchor `instant` at now and compute
-  `reading` from the wall, with no `Instant` arithmetic, so it works on wasm.
-  Take the catalog wall `Timestamp` as given rather than round-tripping it
-  through `SystemTime`, so the stored mapping equals the input's (factor the
-  shared part out of `placed` rather than duplicating it).
+  `reading` from the wall, with no `Instant` arithmetic. Take the catalog
+  wall `Timestamp` as given rather than round-tripping it through
+  `SystemTime`, so the stored mapping equals the input's (factor the shared
+  part out of `placed` rather than duplicating it).
 - Timescale: rescale the wall to `Clock::TIMESCALE` (micro) exactly, and
   refuse one that does not land on a whole microsecond (some 90 kHz values).
   Every first-party publisher already emits micro.
@@ -54,9 +60,6 @@ Decided 2026-10-12:
 Tests: a micro wall round-trips (`from_wall(c)?.wall() == c`); a millisecond
 wall converts; an inexact wall and a future PTS zero are refused; `now()`
 reads the elapsed time since the wall's PTS zero, on a paused clock.
-
-When [moq-net on moq-time](/quest/m1/time/net.md) lands, `from_wall` reads
-the ambient clock along with `placed` and `arrival`.
 
 Public API: additive, one new `moq_mux::Clock` constructor. Wire: none.
 
