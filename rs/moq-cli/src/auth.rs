@@ -19,7 +19,7 @@ pub struct Args {
 
 impl Args {
 	/// Run the requested command, writing the key, token, or payload to the chosen
-	/// destination (stdout by default). `serve` runs until killed.
+	/// destination (stdout by default). `serve` runs until the task is dropped.
 	pub async fn run(self) -> anyhow::Result<()> {
 		match self.command {
 			Command::Serve(serve) => serve.run().await?,
