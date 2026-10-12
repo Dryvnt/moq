@@ -16,7 +16,7 @@ Use cases:
 - A robot with several cameras and one shared set of telemetry.
 - One video with audio in several languages at once.
 
-Requested by an external consumer (OneTooMany) whose need is the robot case.
+Requested downstream; the robot case motivates it.
 Non-goals: tying a `json` or `binary` track to one source. Those sections are
 application-defined and already carry several distinct tracks; an
 application that needs the association defines it, presumably in a catalog
