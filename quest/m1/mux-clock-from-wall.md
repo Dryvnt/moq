@@ -57,6 +57,30 @@ Decided 2026-10-12:
   derivative at `from_wall` and says writes through `Reserved::video` and the
   codec producers keep their timestamps verbatim; today it only describes
   importers shifting onto a pinned clock.
+- Kept apart from `hang::catalog::Clock`, which is the wire mapping alone.
+  This one adds a monotonic anchor and reads the host's time, which neither
+  the format crate nor the JS catalog schema should carry.
+- No JS or binding mirror. js/publish derives its clock from
+  `performance.timeOrigin`, so every broadcast on a page already shares one,
+  and no binding exposes a mux `Clock`; bindings get theirs through
+  [the shared timebase](/quest/m2/ffi-timebase.md).
+
+Open, for the maintainer (API review, 2026-10-12): how a derivative adopts
+the input's mapping. `Producer::modify()` can write a root `clock` that the
+producer's own clock disagrees with, and moq-transcode does exactly that: it
+registers its catalog tracks in `Transcoder::new`, before it has read the
+source's clock, so it cannot use `with_clock`.
+
+1. Public `from_wall` through `with_clock`, as planned above. The `modify()`
+   disagreement stays possible.
+2. Recommended: the root `clock` is the producer's clock. A commit that
+   changes it re-places the producer's clock from it (this constructor, kept
+   `pub(crate)`) while nothing has fixed the clock, and is refused once
+   something has (a handed-out `Producer::clock()`, an anchored importer, a
+   publish) or when it clears the clock. No new public API, and
+   moq-transcode's `out.clock = source.clock` becomes correct as written.
+3. Both: public `from_wall` for callers that know the mapping up front, plus
+   the commit rule from option 2.
 
 Tests: a micro wall round-trips (`from_wall(c)?.wall() == c`); a millisecond
 wall converts; an inexact wall and a future PTS zero are refused; `now()`
