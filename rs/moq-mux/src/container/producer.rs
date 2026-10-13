@@ -541,9 +541,10 @@ where
 			if let Some(recorder) = self.recorder.as_mut() {
 				recorder.finish_group(group.sequence);
 			}
-		}
-		if let Some(end) = reached {
-			self.raise_live_edge(end);
+			// Only a closed group reaches anything; a cut with none open names a point nothing reached.
+			if let Some(end) = reached {
+				self.raise_live_edge(end);
+			}
 		}
 		self.end = None;
 		self.last_duration = None;
@@ -1114,8 +1115,11 @@ mod tests {
 			let mut producer = Producer::new(track, Container::Legacy(crate::container::Kind::Video));
 
 			producer.write(frame(0, true)).unwrap();
+			assert_eq!(producer.live_edge(), None, "no group has ended yet");
 			producer.write(frame(10_000, false)).unwrap();
 			producer.cut(end.map(|us| Timestamp::from_micros(us).unwrap())).unwrap();
+			// With no group open, a cut's bound is a point nothing reached.
+			producer.cut(Some(Timestamp::from_micros(90_000).unwrap())).unwrap();
 			producer.discontinuity().unwrap();
 			producer.finish().unwrap();
 
