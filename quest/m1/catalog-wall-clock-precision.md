@@ -18,7 +18,7 @@ Non-goal: JS `wallClockTime`, which returns a millisecond `Date` by nature.
 ## Plan
 
 Decided 2026-10-12: split from
-[the mux clock constructor](/quest/m1/mux-clock-from-wall.md); the two are
+[adopting a catalog clock](/quest/m1/catalog-clock-adopt.md); the two are
 independent.
 
 Combine the wall and pts as exact rationals before rounding anything:
@@ -45,4 +45,4 @@ Public API: none (behavior fix). Wire: none.
 
 ## Related
 
-- [A mux Clock from a catalog clock](/quest/m1/mux-clock-from-wall.md) - builds the same mapping in the other direction
+- [The catalog root clock is the producer clock](/quest/m1/catalog-clock-adopt.md) - builds the same mapping in the other direction
