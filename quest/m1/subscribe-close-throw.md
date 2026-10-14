@@ -52,12 +52,15 @@ Tests in `js/net/src/lite/subscriber.test.ts`, with mock streams:
 
 - An ordinary unsubscribe (subscribe, receive a group, close) whose peer
   echoes the FIN without SUBSCRIBE_END ends without a ProtocolViolation.
-  Assert on the promise, not on a log; it fails without the fix.
+  `closed.catch` swallows the rejection today, so the test observes the
+  responses promise itself through a narrow seam; a track-closure or log
+  assertion would pass without the fix.
 - A publisher FIN without SUBSCRIBE_END on a track still open closes the
   track with ProtocolViolation.
 - Closing the broadcast request after the track subscribe is dequeued but
   before TRACK_INFO leaves no unhandled rejection, using the
-  `unhandledRejection` pattern from `js/net/src/lite/publisher.test.ts`.
+  `unhandledRejection` pattern from `js/net/src/lite/publisher.test.ts`. The
+  mock withholds TRACK_INFO until the close, so the ordering is explicit.
 
 ## Related
 
