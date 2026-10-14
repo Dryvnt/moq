@@ -26,8 +26,14 @@ Decided 2026-10-14:
   setup. With both fixes that is a SUBSCRIBE cancelled at once, and `main`
   avoids it through its retire logic, so the backport stays minimal.
 
-Tests: port the main quest's tests. The close-during-setup test fails on
-`release` without this PR.
+Tests: port the main quest's tests. The close-during-setup test, which
+withholds TRACK_INFO until the close, is the gate and fails on `release`
+without this PR.
+
+The repro below only sees the public API, so it times the close with
+microtasks rather than observing the TRACK_INFO read. Run it on the unpatched
+`release` build first and confirm 20 of 20, so a 0 on the patched build
+means the fix and not a shifted race.
 
 Repro, with `moq-relay` on this `relay.toml`:
 
